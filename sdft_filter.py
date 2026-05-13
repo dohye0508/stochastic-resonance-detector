@@ -1,0 +1,115 @@
+import numpy as np
+import time
+
+class SDFTAdaptiveFilter:
+    """
+    [보고서 제 3.1절 & 3.2절]: 적응형 소음 추적 및 SDFT 스펙트럼 필터 모듈 (Spectral Flattening 적용)
+    차량 엔진음과 같은 지배 소음 대역(노란색 영역)을 단순 일괄 감쇄하는 것이 아니라,
+    초기 5초간 학습한 주변의 '다른 주파수들의 평균 기저 에너지(Baseline)'와 완벽하게 
+    동일한 높이가 되도록 주파수 빈(bin)마다 각기 다른 맞춤형 감쇄 비율을 적용합니다.
+    """
+    def __init__(self, fs=100.0, buffer_size=128, noise_band_width=5.0, noise_peak_count=1, 
+                 noise_min_freq=5.0, noise_max_freq=48.0, alpha_ema=0.05, flux_k=2.5, calibration_time=5.0):
+        self.fs = fs
+        self.buffer_size = buffer_size
+        self.half_n = buffer_size // 2
+        # 나이퀴스트 이론에 따른 주파수 X축 배열 생성
+        self.x_freq = np.fft.fftfreq(buffer_size, 1/fs)[:self.half_n]
+        
+        self.noise_band_width = noise_band_width # 깎아낼 소음 대역폭 (±Hz)
+        self.noise_peak_count = noise_peak_count # 추적할 지배 소음의 개수
+        self.noise_min_freq = noise_min_freq     # 소음 추적 시작 주파수
+        self.noise_max_freq = noise_max_freq     # 소음 추적 끝 주파수
+        self.alpha_ema = alpha_ema               # 장기 지수이동평균(EMA) 학습률
+        self.flux_k = flux_k                     # 과도 신호 보호 상수 (Spectral Flux Threshold)
+        
+        # 5초간 주변 환경 소음을 파악하기 위한 초기화 타이머
+        self.start_time = time.time()
+        self.calibration_time = calibration_time
+        
+        # 지속 소음 프로필을 누적 기억하는 장기 평균 배열
+        self.M_avg = np.zeros(self.half_n)
+        # 현재 화면에서 감지된 타겟 소음 밴드 목록
+        self.detected_noise_bands = []
+
+    def process(self, signal):
+        # 1. 고속 푸리에 변환(FFT)을 통해 시간 도메인 신호를 주파수 도메인으로 변환
+        raw_fft_complex = np.fft.fft(signal)
+        M_t = np.abs(raw_fft_complex[:self.half_n]) / self.half_n
+        freqs = np.fft.fftfreq(self.buffer_size, 1/self.fs)
+        
+        # 2. 지수이동평균(EMA)을 이용해 장기 소음 프로필 업데이트 (배경 소음 학습)
+        if np.sum(self.M_avg) == 0:
+            self.M_avg = np.copy(M_t) # 최초 실행 시 초기화
+        else:
+            self.M_avg = (1.0 - self.alpha_ema) * self.M_avg + self.alpha_ema * M_t
+            
+        # 3. 실시간으로 가장 강한 지배 소음(Dominant Noise) 대역 경계 식별
+        valid_mask = (self.x_freq >= self.noise_min_freq) & (self.x_freq <= self.noise_max_freq)
+        valid_indices = np.where(valid_mask)[0]
+        
+        self.detected_noise_bands.clear()
+        noise_mask_global = np.zeros(self.half_n, dtype=bool)
+        
+        if len(valid_indices) > 0:
+            M_avg_valid = self.M_avg.copy()
+            for _ in range(self.noise_peak_count):
+                if np.sum(M_avg_valid[valid_indices]) == 0:
+                    break
+                # 가장 강력한 소음 주파수(피크)를 탐색
+                peak_idx = valid_indices[np.argmax(M_avg_valid[valid_indices])]
+                peak_freq = self.x_freq[peak_idx]
+                
+                # 피크를 중심으로 좌우 밴드(Band) 폭 설정
+                band_low = max(self.noise_min_freq, peak_freq - self.noise_band_width)
+                band_high = min(self.noise_max_freq, peak_freq + self.noise_band_width)
+                self.detected_noise_bands.append((band_low, band_high, peak_freq))
+                
+                # 다음 피크 탐색을 위해 현재 찾은 밴드는 임시 마스킹(0 처리)
+                suppress_mask = (self.x_freq >= band_low) & (self.x_freq <= band_high)
+                M_avg_valid[suppress_mask] = 0.0
+                noise_mask_global |= suppress_mask
+                
+        # 원본 FFT 복소수 배열 복사 (여기에 필터링을 가함)
+        clean_fft_complex = np.copy(raw_fft_complex)
+        transient_detected = False
+        
+        # 프로그램 실행 후 경과 시간 확인
+        elapsed = time.time() - self.start_time
+        
+        # 초기 5초(캘리브레이션 기간) 동안은 주변 환경 주파수를 그저 관측하며 학습합니다.
+        # 5초가 지나면 평탄화(Flattening) 감쇄 로직을 가동합니다.
+        if elapsed >= self.calibration_time:
+            # 타겟 소음 밴드(노란색)를 제외한 나머지 "조용한" 주변 주파수들의 평균 기저 에너지(Baseline)를 계산합니다.
+            non_noise_indices = valid_indices[~noise_mask_global[valid_indices]]
+            if len(non_noise_indices) > 0:
+                baseline_target = np.median(self.M_avg[non_noise_indices])
+            else:
+                baseline_target = np.mean(self.M_avg)
+                
+            # 4. 소음 대역에 대한 주파수별 맞춤형 스펙트럼 평탄화(Spectral Flattening) 및 과도 신호 보호
+            for i in range(self.half_n):
+                if noise_mask_global[i]:
+                    # [과도 신호 보호] 현재 에너지가 평소보다 flux_k 배 이상 크다면 발걸음이므로 보호!
+                    if M_t[i] <= self.M_avg[i] * self.flux_k:
+                        # [맞춤형 소음 억제] 노란색 영역을 0으로 뭉개는 것이 아니라,
+                        # 각 주파수 빈(i)마다 현재 높이(M_t)를 바탕으로 서로 다른 감쇄 비율(gain)을 구합니다.
+                        # 목표: 튀어나온 산봉우리를 깎아서 주변 평지(baseline_target)와 높이를 똑같이 맞춥니다!
+                        if M_t[i] > baseline_target:
+                            # 현재 주파수의 에너지를 주변 주파수들의 기저 에너지와 완전히 동일하게 깎아내는 마법의 배율
+                            gain = baseline_target / M_t[i]
+                            
+                            # 복소수 스펙트럼 값에 각각 독립적인 맞춤 감쇄 적용
+                            clean_fft_complex[i] *= gain
+                            if i > 0:
+                                clean_fft_complex[self.buffer_size - i] *= gain
+                    else:
+                        transient_detected = True # 발걸음 보호 발동!
+                        
+        # 5. 역 푸리에 변환(IFFT)을 통해 튀어나온 소음 대역만 정밀하게 깎인 깨끗한 시간 파형 복원
+        filtered_signal = np.fft.ifft(clean_fft_complex).real
+        
+        # UI에 그리기 위한 필터링 후의 스펙트럼 크기(Magnitude) 배열
+        clean_fft_mag = np.abs(clean_fft_complex[:self.half_n]) / self.half_n
+        
+        return filtered_signal, M_t, clean_fft_mag, transient_detected
