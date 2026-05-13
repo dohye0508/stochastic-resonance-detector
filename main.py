@@ -15,6 +15,7 @@ import config
 from step_analyzer import StepDurationAnalyzer
 from sdft_filter import SDFTAdaptiveFilter
 from msr_engine import BistableDoubleWellEngine
+from acf_analyzer import ACFPeriodicityAnalyzer
 from ui_manager import RealTimeUI
 
 def main():
@@ -33,6 +34,7 @@ def main():
     step_analyzer = StepDurationAnalyzer()
     sdft_filter = SDFTAdaptiveFilter()
     bistable_engine = BistableDoubleWellEngine()
+    acf_analyzer = ACFPeriodicityAnalyzer()
     ui = RealTimeUI()
 
     print("시스템 엔진 가동 중... 센서 데이터를 기다립니다.")
@@ -62,6 +64,10 @@ def main():
                 raw_signal = np.array(data_buffer)
                 signal = raw_signal - np.mean(raw_signal)  # 추가적인 직류 편향성(DC Offset) 억제
 
+                # [미세 노이즈 소프트 감쇠 (Soft-Thresholding)]
+                # 완전히 0으로 자르지 않고, 진폭이 작을수록 강하게 억제하며 큰 충격은 그대로 보존하는 수학적 비선형 감쇠
+                signal = signal * (1.0 - np.exp(-np.abs(signal) / 2.5))
+
                 # 1. 발걸음 지속시간 분석기 연산
                 act_idx, is_rec, step_comp, dur, durations = step_analyzer.analyze(signal, current_time)
                 avg_dur = sum(durations)/len(durations) if durations else 0.0
@@ -77,10 +83,16 @@ def main():
                 # 순수 전이 횟수(Net Events) = 신호+소음 전이 횟수(N) - 순수 소음 전이 횟수(K)
                 net_events = max(0, N_t - K_t)
 
-                # 4. [제 3.3절] UI 화면 업데이트 및 최종 경보(Alert) 상태 판별
+                # 4. [제 3.3절 추가] ACF 주기성 분석 (텔레그래프 신호 기반)
+                # 이중 우물 상태 궤적(x_arr_tot)을 -1과 +1의 이진화된 부호파동으로 변환하여 완벽한 리듬 판독
+                telegraph_signal = np.sign(x_arr_tot)
+                acf_r, cadence = acf_analyzer.compute(telegraph_signal)
+
+                # 5. [제 3.3절 최종] UI 화면 업데이트 및 최종 경보(Alert) 상태 판별
                 ui.update(
                     filtered_signal, x_arr_tot, M_t, clean_fft_mag, sdft_filter.M_avg, sdft_filter.detected_noise_bands,
-                    is_rec, step_comp, dur, avg_dur, len(durations), transient_detected, N_t, K_t, net_events
+                    is_rec, step_comp, dur, avg_dur, len(durations), transient_detected, 
+                    N_t, K_t, net_events, acf_r, cadence
                 )
 
                 last_render_time = current_time

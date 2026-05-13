@@ -42,7 +42,7 @@ class RealTimeUI:
         self.ax2.axhline(0.0, color='#d63031', linestyle='--', linewidth=1.5, label='Center Potential Barrier (x=0)')
         self.ax2.axhline(1.0, color='#27ae60', linestyle=':', linewidth=1.2, label='Stable Well (+1.0)')
         self.ax2.axhline(-1.0, color='#27ae60', linestyle=':', linewidth=1.2, label='Stable Well (-1.0)')
-        self.ax2.set_title('[Stage 2] Stochastic Resonance — N(t): Total Crossings / K(t): Noise Baseline / N-K: Pure Impulses', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
+        self.ax2.set_title(f'[Stage 2] Stochastic Resonance & ACF — N(t): Total Crossings / K(t): Noise Baseline / N-K: Pure Impulses (R >= {config.ACF_R_THRESHOLD})', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
         self.ax2.set_xlim(0, self.buffer_size - 1)
         self.ax2.set_ylim(-2.2, 2.2)
         self.ax2.set_xlabel('Sample Index')
@@ -52,6 +52,7 @@ class RealTimeUI:
         self.ax2.set_facecolor('#ffffff')
         
         self.sr_text = self.ax2.text(0.02, 0.88, 'N(t): - | K(t): - | Net Events (N-K): Waiting...', transform=self.ax2.transAxes, fontsize=10, fontweight='bold', color='#2c3e50', bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.9))
+        self.acf_text = self.ax2.text(0.02, 0.74, 'ACF Rhythm (R): Waiting...', transform=self.ax2.transAxes, fontsize=10, fontweight='bold', color='#2c3e50', ha='left', bbox=dict(boxstyle='round,pad=0.4', facecolor='#f5eef8', edgecolor='#9b59b6', alpha=0.9))
         
         # Stage 3 Setup
         self.line_freq_raw, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#b2bec3', linewidth=1.5, label='Instantaneous FFT M(t)', alpha=0.7)
@@ -73,7 +74,8 @@ class RealTimeUI:
         plt.tight_layout(pad=2.0)
         
     def update(self, filtered_signal, x_arr_total, M_t, clean_fft_mag, M_avg, detected_noise_bands, 
-               is_recording, step_completed, duration, avg_duration, step_count, transient_detected, N_t, K_t, net_events):
+               is_recording, step_completed, duration, avg_duration, step_count, transient_detected, 
+               N_t, K_t, net_events, acf_r, cadence):
         
         self.line_time_clean.set_ydata(filtered_signal)
         max_clean_amp = max(np.max(np.abs(filtered_signal)), 20.0)
@@ -93,10 +95,18 @@ class RealTimeUI:
             self.bypass_label.set_text('Transient Bypass: OFF')
             self.bypass_label.set_color('#b2bec3')
             
+        # 최종 경보(Alert) 조건 검증 (보고서 흐름 완벽 매핑)
+        # 1. 1차 판정: 공명 전이(N-K) 횟수가 기준치 이상인가?
         if net_events >= config.ALERT_NET_EVENTS:
-            self.alert_text.set_text(f'WILD ANIMAL DETECTED! (SR Net Events: {net_events})')
-            self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
-            self.fig.patch.set_facecolor('#fff0f0')
+            # 2. 최종 판정: ACF 주기가 동물의 리듬과 일치하는가? (R값이 임계치(0.75) 이상인가?)
+            if acf_r >= config.ACF_R_THRESHOLD:
+                self.alert_text.set_text(f'CONFIRMED WILDLIFE! (N-K: {net_events} | ACF R={acf_r:.2f} | {cadence:.2f}s Rhythm)')
+                self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
+                self.fig.patch.set_facecolor('#fff0f0')
+            else:
+                self.alert_text.set_text(f'WARNING: IMPACTS DETECTED (N-K: {net_events}) - Verifying Rhythm...')
+                self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#e67e22', edgecolor='none', alpha=0.97))
+                self.fig.patch.set_facecolor('#fdf2e9')
         else:
             self.alert_text.set_text('STATUS: MONITORING')
             self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#00b894', edgecolor='none', alpha=0.92))
@@ -108,6 +118,13 @@ class RealTimeUI:
             self.sr_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#a3e4d7', edgecolor='#1abc9c', alpha=0.95))
         else:
             self.sr_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.85))
+            
+        if acf_r >= config.ACF_R_THRESHOLD:
+            self.acf_text.set_text(f'ACF Rhythm (R): {acf_r:.2f} (Cadence: {cadence:.2f}s)')
+            self.acf_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#d7bde2', edgecolor='#8e44ad', alpha=0.95))
+        else:
+            self.acf_text.set_text(f'ACF Rhythm (R): {acf_r:.2f} (No periodic rhythm)')
+            self.acf_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#f5eef8', edgecolor='#9b59b6', alpha=0.85))
             
         self.line_freq_raw.set_ydata(M_t)
         self.line_freq_clean.set_ydata(clean_fft_mag)

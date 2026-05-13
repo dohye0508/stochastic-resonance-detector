@@ -1,41 +1,31 @@
-# 🦌 Stochastic Resonance Wildlife Detection System
+# 🦌 확률 공명(SR) 기반 야생동물 실시간 감지 시스템
 
-A real-time wildlife roadkill prevention and alert system leveraging **Non-linear Bistable Double-Well Potential Integration** and **Adaptive SDFT Spectral Flattening**.
+차량 엔진음이나 도로의 쉴 새 없는 배경 소음 속에서도 야생동물의 옅은 발걸음을 감지해내는 실시간 경보 시스템입니다. 물리적 확률 공명(Stochastic Resonance) 이론과 자기상관함수(ACF)를 결합하여, 무작위 충격이 아닌 '동물의 걷는 리듬'을 정확하게 판별해냅니다.
 
-## 📌 Project Overview
-This system is designed to detect the subtle, transient footsteps of four-legged wildlife approaching roads, even when their signals are completely submerged beneath heavy, continuous environmental noise (e.g., vehicle engine vibrations). By utilizing the physics of **Stochastic Resonance (SR)**, the system constructively utilizes background noise to amplify weak biological signals into a recognizable binary state.
+## 📌 주요 특징
+* **적응형 노이즈 억제 (SDFT)**: 주변 환경의 지속적인 소음을 5초간 학습한 뒤, 해당 노이즈 대역폭만 선택적으로 평탄화하여 불필요한 진동을 깎아냅니다.
+* **이중 우물 퍼텐셜 엔진 (Bistable Engine)**: 미세한 발걸음 진동에 오히려 잡음을 더해 확률 공명 현상을 일으키고, 이를 뚜렷한 디지털 텔레그래프 신호(이진 상태)로 증폭시킵니다.
+* **리듬 검증 알고리즘 (ACF)**: 엔진을 통과한 신호를 분석하여, 동물의 규칙적인 보행 리듬(0.3초~1.5초 간격)이 0.75 이상의 상관계수(R)로 잡힐 때만 최종 야생동물 경보를 발생시킵니다.
+* **실시간 대시보드 (Matplotlib)**: 아두이노 센서로부터 100Hz로 들어오는 데이터를 실시간으로 모니터링하고 분석 결과를 시각화합니다.
 
-## ⚙️ Core Architecture & Modules
+## ⚙️ 파일 구성
+* `config.py`: 시스템의 핵심 파라미터(센서 설정, 필터 민감도, 경보 임계값 등)를 한곳에서 관리
+* `main.py`: 파이프라인의 핵심 실행 파일
+* `sdft_filter.py`: 주파수 영역(SDFT)에서 배경 소음을 억제하는 필터
+* `msr_engine.py`: 비선형 오일러-마루야마 적분기 (확률 공명 코어)
+* `acf_analyzer.py`: 발걸음의 반복 주기성과 리듬을 계산하는 검증 모듈
+* `step_analyzer.py`: 충격 파형의 물리적 지속 시간을 기록하는 모듈
+* `ui_manager.py`: 실시간 분석 상태와 경보를 띄워주는 대시보드 매니저
 
-The pipeline is strictly mapped to the mathematical chapters of the research report and fully modularized:
+## 🚀 실행 방법
 
-- **`main.py`** 
-  The master orchestrator. Coordinates serial intake, data buffering (1.28s window), and the synchronized execution of all sub-modules.
-  
-- **`sdft_filter.py` (Spectral Flattening Filter)**
-  Monitors the frequency domain via Sliding DFT. Calibrates to ambient noise for the first 5 seconds, then applies targeted **Spectral Flattening (Whitening)**. It dynamically calculates independent attenuation gains for noise-heavy frequency bins to perfectly flatten them to the surrounding background baseline, while preserving transient footstep impulses.
-  
-- **`msr_engine.py` (Bistable Double-Well Potential Engine)**
-  The mathematical core. Solves the Non-linear Langevin Equation ($dx/dt = ax - bx^3 + S + N$) in real-time using Euler-Maruyama numerical integration. Outputs a quantized Telegraph Binary Signal ($sgn(x(t))$) indicating the physical state-hopping of a particle between two potential wells.
-  
-- **`step_analyzer.py` (Engineering Step Tracker)**
-  Uses derivative-based Schmitt Trigger logic to track the exact physical duration of the footsteps.
-
-- **`ui_manager.py` (Real-Time Visualization)**
-  A 3-stage Matplotlib dashboard providing zero-latency visual feedback of the filtered signal, the binary double-well state, and the AI noise-tracking spectrum.
-
-## 🚀 How to Run
-
-1. Connect your Arduino vibration sensor.
-2. Verify the `PORT` (e.g., `COM4`) in `main.py`.
-3. Install dependencies:
+1. 아두이노 진동 센서(지오폰 등)를 연결합니다.
+2. `config.py`를 열어 `PORT` 변수(예: `COM4`)를 자신의 환경에 맞게 수정합니다.
+3. 파이썬 필수 패키지를 설치합니다.
    ```bash
    pip install numpy matplotlib pyserial
    ```
-4. Run the orchestrator:
+4. 메인 스크립트를 실행하면 대시보드가 가동됩니다.
    ```bash
    python main.py
    ```
-
-## 📊 Detection Logic
-The system completely abandons traditional amplitude-based thresholds. An alert is only triggered when the **Net Transition Frequency ($N(t) - K(t) \ge 3$)** criteria is met within the 1.28s observation window, ensuring a mathematical necessity and sufficiency for continuous biological walking rhythms.
