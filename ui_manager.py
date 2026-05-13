@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import config
 
 class RealTimeUI:
     """
@@ -8,14 +9,14 @@ class RealTimeUI:
     분석 결과에 따라 시각적인 경고 배너를 실시간으로 업데이트합니다.
     (폰트 깨짐 방지를 위해 UI 텍스트는 영문으로 유지합니다.)
     """
-    def __init__(self, fs, buffer_size, noise_min_freq, noise_max_freq, alpha_ema, noise_band_width):
-        self.fs = fs
-        self.buffer_size = buffer_size
-        self.half_n = buffer_size // 2
+    def __init__(self):
+        self.fs = config.FS
+        self.buffer_size = config.BUFFER_SIZE
+        self.half_n = self.buffer_size // 2
         
-        self.x_time = np.arange(buffer_size)
-        self.x_freq = np.fft.fftfreq(buffer_size, 1/fs)[:self.half_n]
-        self.noise_band_width = noise_band_width
+        self.x_time = np.arange(self.buffer_size)
+        self.x_freq = np.fft.fftfreq(self.buffer_size, 1/self.fs)[:self.half_n]
+        self.noise_band_width = config.NOISE_BAND_WIDTH
         
         plt.ion()
         self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(13, 11))
@@ -23,10 +24,10 @@ class RealTimeUI:
         self.fig.patch.set_facecolor('#f0f3f7')
         
         # Stage 1 Setup
-        self.line_time_clean, = self.ax1.plot(self.x_time, np.zeros(buffer_size), color='#0984e3', linewidth=2.0, label='Filtered Output')
+        self.line_time_clean, = self.ax1.plot(self.x_time, np.zeros(self.buffer_size), color='#0984e3', linewidth=2.0, label='Filtered Output')
         self.ax1.set_title('[Stage 1] SDFT Adaptive Filter — Continuous Noise Suppressed, Footsteps Preserved', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
-        self.ax1.set_xlim(0, buffer_size - 1)
-        self.ax1.set_xlabel(f'Sample Index (Buffer: {buffer_size} samples = {buffer_size/fs*1000:.0f}ms)')
+        self.ax1.set_xlim(0, self.buffer_size - 1)
+        self.ax1.set_xlabel(f'Sample Index (Buffer: {self.buffer_size} samples = {self.buffer_size/self.fs*1000:.0f}ms)')
         self.ax1.set_ylabel('Amplitude')
         self.ax1.legend(loc='upper right', framealpha=0.9, fontsize=9)
         self.ax1.grid(True, linestyle='--', alpha=0.4)
@@ -37,12 +38,12 @@ class RealTimeUI:
         self.bypass_label = self.ax1.text(0.98, 0.12, 'Transient Bypass: OFF', transform=self.ax1.transAxes, fontsize=9, fontweight='bold', color='#b2bec3', ha='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='#dfe6e9'))
         
         # Stage 2 Setup
-        self.line_time_sr, = self.ax2.plot(self.x_time, np.zeros(buffer_size), color='#a29bfe', linewidth=1.5, label='Bistable Binary State: sgn(x(t))')
+        self.line_time_sr, = self.ax2.plot(self.x_time, np.zeros(self.buffer_size), color='#a29bfe', linewidth=1.5, label='Bistable Binary State: sgn(x(t))')
         self.ax2.axhline(0.0, color='#d63031', linestyle='--', linewidth=1.5, label='Center Potential Barrier (x=0)')
         self.ax2.axhline(1.0, color='#27ae60', linestyle=':', linewidth=1.2, label='Stable Well (+1.0)')
         self.ax2.axhline(-1.0, color='#27ae60', linestyle=':', linewidth=1.2, label='Stable Well (-1.0)')
         self.ax2.set_title('[Stage 2] Stochastic Resonance — N(t): Total Crossings / K(t): Noise Baseline / N-K: Pure Impulses', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
-        self.ax2.set_xlim(0, buffer_size - 1)
+        self.ax2.set_xlim(0, self.buffer_size - 1)
         self.ax2.set_ylim(-2.2, 2.2)
         self.ax2.set_xlabel('Sample Index')
         self.ax2.set_ylabel('Amplitude')
@@ -55,12 +56,12 @@ class RealTimeUI:
         # Stage 3 Setup
         self.line_freq_raw, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#b2bec3', linewidth=1.5, label='Instantaneous FFT M(t)', alpha=0.7)
         self.line_freq_clean, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#d63031', linewidth=2.0, label='Filtered Spectrum')
-        self.line_freq_avg, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#e67e22', linestyle=':', linewidth=2.0, label=f'Long-term Avg M_avg (a={alpha_ema})')
-        self.ax3.axvspan(noise_min_freq, noise_max_freq, color='#dfe6e9', alpha=0.2, label=f'Search Range ({noise_min_freq}-{noise_max_freq}Hz)')
+        self.line_freq_avg, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#e67e22', linestyle=':', linewidth=2.0, label=f'Long-term Avg M_avg (a={config.ALPHA_EMA})')
+        self.ax3.axvspan(config.NOISE_MIN_FREQ, config.NOISE_MAX_FREQ, color='#dfe6e9', alpha=0.2, label=f'Search Range ({config.NOISE_MIN_FREQ}-{config.NOISE_MAX_FREQ}Hz)')
         
         self.noise_band_patches = []
         self.ax3.set_title('[Stage 3] Real-time Spectrum — Yellow: Tracked Noise Attenuation Band', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
-        self.ax3.set_xlim(0, fs / 2)
+        self.ax3.set_xlim(0, self.fs / 2)
         self.ax3.set_xlabel('Frequency (Hz)')
         self.ax3.set_ylabel('Magnitude')
         self.ax3.legend(loc='upper right', framealpha=0.9, fontsize=9)
@@ -92,7 +93,7 @@ class RealTimeUI:
             self.bypass_label.set_text('Transient Bypass: OFF')
             self.bypass_label.set_color('#b2bec3')
             
-        if net_events >= 3:
+        if net_events >= config.ALERT_NET_EVENTS:
             self.alert_text.set_text(f'WILD ANIMAL DETECTED! (SR Net Events: {net_events})')
             self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
             self.fig.patch.set_facecolor('#fff0f0')

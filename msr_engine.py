@@ -29,24 +29,19 @@
                => x_{t+1} = x_t + (a*x_t - b*x_t^3 + Force_t) * dt
 """
 import numpy as np
+import config
 
 class BistableDoubleWellEngine:
-    def __init__(self, a=50.0, b=50.0, dt=0.01, force_scalar=1.0, bound=2.2):
+    def __init__(self):
         """
         보고서 4.1.1절에 맞춰 수치 시뮬레이터 파라미터를 초기화합니다.
-        
-        매개변수:
-            a (float): 퍼텐셜 우물의 기울기 및 복원력을 결정하는 선형 계수
-            b (float): 에너지 장벽의 가파름을 결정하는 비선형 스칼라 계수
-            dt (float): 이산적 시간 간격 (1.0 / 샘플링 주파수). 100Hz면 0.01초
-            force_scalar (float): 100Hz의 짧은 찰나(dt)에 입자가 충분히 움직이도록 외력을 증폭하는 배수
-            bound (float): 프로그램이 수학적 발산(무한대)으로 튕기는 것을 막는 절대적 하드웨어 안전 한계치
+        (모든 상수는 config.py에서 통합 관리됩니다.)
         """
-        self.a = a
-        self.b = b
-        self.dt = dt
-        self.force_scalar = force_scalar
-        self.bound = bound
+        self.a = config.POTENTIAL_A
+        self.b = config.POTENTIAL_B
+        self.dt = config.DT
+        self.force_scalar = config.FORCE_SCALAR
+        self.bound = config.BOUND
         
         # 이전 프레임에서 계산된 입자의 마지막 위치를 기억해두는 변수입니다.
         # 이를 통해 버퍼(프레임)가 넘어가도 입자의 움직임이 물리적으로 끊기지 않고 연속되도록 보장합니다.

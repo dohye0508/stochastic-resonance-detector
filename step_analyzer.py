@@ -1,19 +1,20 @@
 import time
 import csv
 import numpy as np
+import config
 
 class StepDurationAnalyzer:
     """
     [엔지니어링 모듈]: 1차 차분(가속도)과 슈미트 트리거(Schmitt Trigger)를 활용하여 
     실제 발걸음의 물리적 지속 시간(Duration)을 측정하고 기록하는 모듈입니다.
     """
-    def __init__(self, threshold_start=15.0, threshold_end=8.0, hang_time=0.1, csv_filename="step_duration_data.csv"):
+    def __init__(self, csv_filename="step_duration_data.csv"):
         # 발걸음 판정 시작 기준 (이 값을 넘으면 측정을 시작)
-        self.threshold_start = threshold_start
+        self.threshold_start = config.THRESHOLD_START
         # 발걸음 판정 종료 기준 (이 값 밑으로 떨어지면 측정을 종료할지 고민)
-        self.threshold_end = threshold_end
-        # 행 타임 (신호가 약해져도 바로 종료하지 않고 기다려주는 여유 시간, 0.1초)
-        self.hang_time = hang_time
+        self.threshold_end = config.THRESHOLD_END
+        # 행 타임 (신호가 약해져도 바로 종료하지 않고 기다려주는 여유 시간)
+        self.hang_time = config.HANG_TIME
         self.csv_filename = csv_filename
         
         # 내부 상태 추적 변수들

@@ -1,5 +1,6 @@
 import numpy as np
 import time
+import config
 
 class SDFTAdaptiveFilter:
     """
@@ -8,24 +9,23 @@ class SDFTAdaptiveFilter:
     초기 5초간 학습한 주변의 '다른 주파수들의 평균 기저 에너지(Baseline)'와 완벽하게 
     동일한 높이가 되도록 주파수 빈(bin)마다 각기 다른 맞춤형 감쇄 비율을 적용합니다.
     """
-    def __init__(self, fs=100.0, buffer_size=128, noise_band_width=5.0, noise_peak_count=1, 
-                 noise_min_freq=5.0, noise_max_freq=48.0, alpha_ema=0.05, flux_k=2.5, calibration_time=5.0):
-        self.fs = fs
-        self.buffer_size = buffer_size
-        self.half_n = buffer_size // 2
+    def __init__(self):
+        self.fs = config.FS
+        self.buffer_size = config.BUFFER_SIZE
+        self.half_n = self.buffer_size // 2
         # 나이퀴스트 이론에 따른 주파수 X축 배열 생성
-        self.x_freq = np.fft.fftfreq(buffer_size, 1/fs)[:self.half_n]
+        self.x_freq = np.fft.fftfreq(self.buffer_size, 1/self.fs)[:self.half_n]
         
-        self.noise_band_width = noise_band_width # 깎아낼 소음 대역폭 (±Hz)
-        self.noise_peak_count = noise_peak_count # 추적할 지배 소음의 개수
-        self.noise_min_freq = noise_min_freq     # 소음 추적 시작 주파수
-        self.noise_max_freq = noise_max_freq     # 소음 추적 끝 주파수
-        self.alpha_ema = alpha_ema               # 장기 지수이동평균(EMA) 학습률
-        self.flux_k = flux_k                     # 과도 신호 보호 상수 (Spectral Flux Threshold)
+        self.noise_band_width = config.NOISE_BAND_WIDTH
+        self.noise_peak_count = config.NOISE_PEAK_COUNT
+        self.noise_min_freq = config.NOISE_MIN_FREQ
+        self.noise_max_freq = config.NOISE_MAX_FREQ
+        self.alpha_ema = config.ALPHA_EMA
+        self.flux_k = config.FLUX_K
         
         # 5초간 주변 환경 소음을 파악하기 위한 초기화 타이머
         self.start_time = time.time()
-        self.calibration_time = calibration_time
+        self.calibration_time = config.CALIBRATION_TIME
         
         # 지속 소음 프로필을 누적 기억하는 장기 평균 배열
         self.M_avg = np.zeros(self.half_n)
