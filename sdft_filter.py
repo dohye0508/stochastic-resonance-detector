@@ -31,6 +31,7 @@ class SDFTAdaptiveFilter:
         self.M_avg = np.zeros(self.half_n)
         # 현재 화면에서 감지된 타겟 소음 밴드 목록
         self.detected_noise_bands = []
+        self.manual_bands = []   # 사용자가 UI에서 수동으로 지정한 감쇄 대역 [(low, high), ...]
 
     def process(self, signal):
         # 1. 고속 푸리에 변환(FFT)을 통해 시간 도메인 신호를 주파수 도메인으로 변환
@@ -70,6 +71,13 @@ class SDFTAdaptiveFilter:
                 M_avg_valid[suppress_mask] = 0.0
                 noise_mask_global |= suppress_mask
                 
+        # [수동 감쇄] 사용자가 드래그한 영역 추가
+        for m_low, m_high in self.manual_bands:
+            m_mask = (self.x_freq >= m_low) & (self.x_freq <= m_high)
+            noise_mask_global |= m_mask
+            # UI 표시를 위해 detected 목록에도 추가 (피크값은 중간값으로 표시)
+            self.detected_noise_bands.append((m_low, m_high, (m_low + m_high)/2))
+                
         # 원본 FFT 복소수 배열 복사 (여기에 필터링을 가함)
         clean_fft_complex = np.copy(raw_fft_complex)
         transient_detected = False
@@ -90,16 +98,17 @@ class SDFTAdaptiveFilter:
             # 4. 소음 대역에 대한 주파수별 맞춤형 스펙트럼 평탄화(Spectral Flattening) 및 과도 신호 보호
             for i in range(self.half_n):
                 if noise_mask_global[i]:
+                    # 수동 지정 대역인지 확인 (수동 대역은 보호 로직을 무시하고 강제 감쇄)
+                    is_manual = any(low <= self.x_freq[i] <= high for low, high in self.manual_bands)
+                    
                     # [과도 신호 보호] 현재 에너지가 평소보다 flux_k 배 이상 크다면 발걸음이므로 보호!
-                    if M_t[i] <= self.M_avg[i] * self.flux_k:
-                        # [맞춤형 소음 억제] 노란색 영역을 0으로 뭉개는 것이 아니라,
-                        # 각 주파수 빈(i)마다 현재 높이(M_t)를 바탕으로 서로 다른 감쇄 비율(gain)을 구합니다.
-                        # 목표: 튀어나온 산봉우리를 깎아서 주변 평지(baseline_target)와 높이를 똑같이 맞춥니다!
-                        if M_t[i] > baseline_target:
-                            # 현재 주파수의 에너지를 주변 주파수들의 기저 에너지와 완전히 동일하게 깎아내는 마법의 배율
-                            gain = baseline_target / M_t[i]
+                    if is_manual or M_t[i] <= self.M_avg[i] * self.flux_k:
+                        # [안정화된 감쇄] 순간적인 M_t가 아닌 학습된 M_avg를 기준으로 감쇄 배율(gain) 결정
+                        # 이를 통해 매 프레임 파형이 요동치는 'Musical Noise' 현상을 억제합니다.
+                        if self.M_avg[i] > baseline_target:
+                            gain = baseline_target / self.M_avg[i]
                             
-                            # 복소수 스펙트럼 값에 각각 독립적인 맞춤 감쇄 적용
+                            # 복소수 스펙트럼 값에 독립적인 맞춤 감쇄 적용
                             clean_fft_complex[i] *= gain
                             if i > 0:
                                 clean_fft_complex[self.buffer_size - i] *= gain

@@ -35,7 +35,12 @@ def main():
     sdft_filter = SDFTAdaptiveFilter()
     bistable_engine = BistableDoubleWellEngine()
     acf_analyzer = ACFPeriodicityAnalyzer()
-    ui = RealTimeUI()
+
+    # UI 상호작용성 강화: 사용자가 스펙트럼에서 드래그한 영역을 필터에 실시간 반영
+    def on_band_change(bands):
+        sdft_filter.manual_bands = bands
+        
+    ui = RealTimeUI(on_manual_band_change=on_band_change)
 
     print("시스템 엔진 가동 중... 센서 데이터를 기다립니다.")
     last_render_time = time.time()

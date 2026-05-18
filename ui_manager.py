@@ -1,15 +1,17 @@
 import matplotlib.pyplot as plt
+from matplotlib.widgets import SpanSelector
 import numpy as np
 import config
 
 class RealTimeUI:
     """
-    [보고서 제 3.3절]: 경고 출력 및 실시간 시각화 매니저
-    파이프라인의 3단계 상태를 Matplotlib을 통해 시각적으로 렌더링하고,
-    분석 결과에 따라 시각적인 경고 배너를 실시간으로 업데이트합니다.
-    (폰트 깨짐 방지를 위해 UI 텍스트는 영문으로 유지합니다.)
+    [보고서 제 3.3절 개량형]: 사용자 상호작용형 노이즈 감쇄 매니저
+    사용자가 직접 특정 주파수 대역을 드래그하여 감쇄 영역을 수동으로 추가할 수 있습니다.
     """
-    def __init__(self):
+    def __init__(self, on_manual_band_change=None):
+        self.on_manual_band_change = on_manual_band_change
+        self.manual_bands = []
+        
         self.fs = config.FS
         self.buffer_size = config.BUFFER_SIZE
         self.half_n = self.buffer_size // 2
@@ -20,7 +22,16 @@ class RealTimeUI:
         
         plt.ion()
         self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(13, 11))
-        self.fig.canvas.manager.set_window_title('Wildlife Detection System | Real-time Analysis')
+        
+        # --- [추가] SpanSelector 설정 (Spectrum 드래그 감쇄용) ---
+        self.span = SpanSelector(self.ax3, self.onselect, 'horizontal', useblit=True,
+                                 props=dict(alpha=0.5, facecolor='#fab1a0'),
+                                 interactive=True, drag_from_anywhere=True)
+        
+        # 'c' 키를 누르면 수동 감쇄 영역 초기화
+        self.fig.canvas.mpl_connect('key_press_event', self.on_key)
+        
+        self.fig.canvas.manager.set_window_title('Wildlife Detection System | Interactive Analysis')
         self.fig.patch.set_facecolor('#f0f3f7')
         
         # Stage 1 Setup
@@ -70,9 +81,28 @@ class RealTimeUI:
         self.ax3.set_facecolor('#ffffff')
         
         self.band_info_text = self.ax3.text(0.02, 0.88, 'Tracked Peak: Initializing...', transform=self.ax3.transAxes, fontsize=10, fontweight='bold', color='#2d3436', bbox=dict(boxstyle='round,pad=0.4', facecolor='#fff3cd', edgecolor='#ffc107', alpha=0.9))
+        self.hint_text = self.ax3.text(0.98, 0.05, 'Drag to attenuate | Press "c" to clear', transform=self.ax3.transAxes, fontsize=8, color='#636e72', ha='right', alpha=0.7)
         
         plt.tight_layout(pad=2.0)
         
+    def onselect(self, xmin, xmax):
+        """드래그 완료 시 호출되는 콜백 (수동 감쇄 영역 추가)"""
+        if abs(xmax - xmin) < 0.2:
+            return
+            
+        self.manual_bands.append((xmin, xmax))
+        if self.on_manual_band_change:
+            self.on_manual_band_change(self.manual_bands)
+        print(f"수동 감쇄 대역 추가: {xmin:.1f}Hz ~ {xmax:.1f}Hz")
+
+    def on_key(self, event):
+        """키보드 입력 처리 ('c' 누르면 초기화)"""
+        if event.key == 'c':
+            self.manual_bands.clear()
+            if self.on_manual_band_change:
+                self.on_manual_band_change(self.manual_bands)
+            print("수동 감쇄 대역 초기화 완료")
+
     def update(self, filtered_signal, x_arr_total, M_t, clean_fft_mag, M_avg, detected_noise_bands, 
                is_recording, step_completed, duration, avg_duration, step_count, transient_detected, 
                N_t, K_t, net_events, acf_r, cadence):
