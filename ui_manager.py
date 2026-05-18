@@ -1,186 +1,599 @@
-import matplotlib.pyplot as plt
+# -*- coding: utf-8 -*-
+"""
+Wildlife Detection System — Tkinter + Matplotlib 통합 UI
+"""
+import tkinter as tk
+from tkinter import ttk
+import matplotlib
+matplotlib.use('TkAgg')
+matplotlib.rc('font', family='Malgun Gothic')
+matplotlib.rc('axes', unicode_minus=False)
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import SpanSelector
 import numpy as np
 import config
 
-class RealTimeUI:
-    """
-    [보고서 제 3.3절 개량형]: 사용자 상호작용형 노이즈 감쇄 매니저
-    사용자가 직접 특정 주파수 대역을 드래그하여 감쇄 영역을 수동으로 추가할 수 있습니다.
-    """
-    def __init__(self, on_manual_band_change=None):
+# ─── 색상 팔레트 ────────────────────────────────────
+BG       = '#0f0f1a'
+PANEL_BG = '#13131f'
+CARD_BG  = '#1a1a2e'
+ACCENT   = '#e94560'
+TEXT     = '#e2e2e2'
+MUTED    = '#636e72'
+PLOT_BG  = '#090912'
+
+MENU_BUTTONS = [
+    ('1', '[환경 셋업]',     '배경 진동 측정 및 파일 저장 (15분)', '#0984e3'),
+    ('2', '[파라미터 튜닝]', '발걸음 실시간 측정 → SR 최적화',    '#00b894'),
+    ('3', '[파라미터 튜닝]', '저장된 파일 불러와 SR 최적화',       '#6c5ce7'),
+    ('4', '[신호 녹화]',     '센서 신호를 폴더에 CSV 저장',         '#e17055'),
+    ('5', '[실시간 감지]',   '설정된 파라미터로 즉시 가동',         '#fdcb6e'),
+]
+
+SENSOR_FOLDERS = {
+    '1': ('Geophone',          'geophone'),
+    '2': ('MEMS microphone',   'microphone'),
+    '3': ('surround noise',    'surround_noise'),
+    '4': ('Dual channel',      'dual_sensor'),
+}
+
+
+class WildlifeUI:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title('Wildlife Detection System')
+        self.root.configure(bg=BG)
+        self.root.geometry('1280x800')
+        self.root.resizable(True, True)
+
+        self.choice = None
+        self._quit = False
+        self.manual_bands = []
+        self.on_manual_band_change = None
+        self.noise_band_patches = []
+
+        self._build_header()
+        self.content = None
+        self._show_menu()
+
+    # ══════════════════════════════════════════════
+    # 헤더 (항상 표시)
+    # ══════════════════════════════════════════════
+    def _build_header(self):
+        hdr = tk.Frame(self.root, bg=PANEL_BG, height=52)
+        hdr.pack(fill='x', side='top')
+        hdr.pack_propagate(False)
+
+        tk.Label(hdr, text='🐾 Wildlife Detection System',
+                 font=('Arial', 13, 'bold'), fg=ACCENT, bg=PANEL_BG
+                 ).pack(side='left', padx=18, pady=12)
+
+        tk.Button(hdr, text=' ✕  종료 ', command=self._on_quit,
+                  font=('Arial', 10, 'bold'), fg='white', bg=ACCENT,
+                  relief='flat', padx=10, pady=4, cursor='hand2',
+                  activebackground='#c0392b', activeforeground='white'
+                  ).pack(side='right', padx=18, pady=10)
+
+    # ══════════════════════════════════════════════
+    # 콘텐츠 영역 교체
+    # ══════════════════════════════════════════════
+    def _clear(self):
+        if self.content:
+            self.content.destroy()
+        self.content = tk.Frame(self.root, bg=BG)
+        self.content.pack(fill='both', expand=True)
+
+    # ══════════════════════════════════════════════
+    # 메인 메뉴
+    # ══════════════════════════════════════════════
+    def _show_menu(self):
+        self._clear()
+        f = self.content
+
+        tk.Label(f, text='시스템 가동 모드 선택',
+                 font=('Arial', 20, 'bold'), fg=TEXT, bg=BG
+                 ).pack(pady=(36, 4))
+        tk.Label(f, text='수행할 작업을 선택하세요',
+                 font=('Arial', 11), fg=MUTED, bg=BG
+                 ).pack(pady=(0, 24))
+
+        for key, title, desc, color in MENU_BUTTONS:
+            outer = tk.Frame(f, bg=color)
+            outer.pack(fill='x', padx=100, pady=5)
+
+            inner = tk.Frame(outer, bg=CARD_BG, pady=14, padx=22)
+            inner.pack(fill='x', padx=2, pady=2)
+
+            row = tk.Frame(inner, bg=CARD_BG)
+            row.pack(fill='x')
+
+            num_lbl  = tk.Label(row, text=f'{key}.',
+                                font=('Arial', 14, 'bold'), fg=color, bg=CARD_BG, width=3)
+            ttl_lbl  = tk.Label(row, text=title,
+                                font=('Arial', 12, 'bold'), fg=color, bg=CARD_BG, width=18, anchor='w')
+            desc_lbl = tk.Label(row, text=desc,
+                                font=('Arial', 10), fg='#b2bec3', bg=CARD_BG)
+            num_lbl.pack(side='left')
+            ttl_lbl.pack(side='left')
+            desc_lbl.pack(side='left', padx=8)
+
+            def _cb(k=key):
+                self.choice = k
+                self.root.quit()
+
+            def _enter(e, w=inner): w.configure(bg='#252540')
+            def _leave(e, w=inner): w.configure(bg=CARD_BG)
+
+            for w in (outer, inner, row, num_lbl, ttl_lbl, desc_lbl):
+                w.bind('<Button-1>', lambda e, cb=_cb: cb())
+                w.bind('<Enter>', _enter)
+                w.bind('<Leave>', _leave)
+
+    def wait_for_choice(self):
+        """메뉴를 보여주고 사용자 선택을 기다린다."""
+        self._show_menu()
+        self.choice = None
+        self.root.mainloop()
+        if self._quit:
+            return None
+        return self.choice
+
+    # ══════════════════════════════════════════════
+    # 모드 1/4: 녹화 / 배경 소음 수집 그래프 (2패널)
+    # ══════════════════════════════════════════════
+    def show_recording_graph(self, title, subtitle, dual=False):
+        self._clear()
+        f = self.content
+        self._is_dual_mode = dual
+
+        tk.Label(f, text=title,    font=('Arial', 14, 'bold'), fg=TEXT,  bg=BG).pack(pady=(10, 2))
+        tk.Label(f, text=subtitle, font=('Arial', 10),         fg=MUTED, bg=BG).pack()
+
+        self._status = tk.Label(f, text='⏳ 준비 중...', font=('Arial', 11, 'bold'),
+                                fg='#fdcb6e', bg=BG)
+        self._status.pack(pady=4)
+
+        fig = Figure(figsize=(11, 5.2), facecolor=BG)
+        ax1 = fig.add_subplot(2, 1, 1, facecolor=PLOT_BG)
+        ax2 = fig.add_subplot(2, 1, 2, facecolor=PLOT_BG)
+
+        for ax in (ax1, ax2):
+            ax.tick_params(colors=MUTED)
+            for sp in ax.spines.values(): sp.set_color('#2d2d4e')
+            ax.grid(True, linestyle='--', alpha=0.2, color='#333')
+        ax1.set_title('실시간 센서 신호', color='#b2bec3', fontsize=10)
+        ax1.set_ylabel('Amplitude', color=MUTED)
+        
+        if dual:
+            self._rline, = ax1.plot([], [], color='#00cec9', linewidth=1.2, label='Geophone (A0)')
+            self._rline_mic, = ax1.plot([], [], color='#ff7675', linewidth=1.2, label='MEMS Mic (A1)')
+            ax1.legend(loc='upper right', facecolor=PLOT_BG, edgecolor='#2d2d4e', labelcolor=TEXT, fontsize=8)
+        else:
+            self._rline, = ax1.plot([], [], color='#00cec9', linewidth=1.2)
+            
+        self._hline, = ax2.plot([], [], color='#a29bfe', linewidth=1.5)
+        ax2.set_title('진폭 분포 (Histogram)', color='#b2bec3', fontsize=10)
+        fig.tight_layout(pad=2.0)
+
+        self._rec_ax1, self._rec_ax2 = ax1, ax2
+        cv = FigureCanvasTkAgg(fig, master=f)
+        cv.draw()
+        cv.get_tk_widget().pack(fill='both', expand=True, padx=10, pady=6)
+        self._rec_canvas = cv
+
+    def update_recording_graph(self, samples, status_text, color='#fdcb6e'):
+        if not hasattr(self, '_rec_canvas'): return
+        try:
+            is_dual = getattr(self, '_is_dual_mode', False)
+            if is_dual:
+                # 듀얼 채널인 경우: samples는 [(val0, val1), ...] 형태
+                arr_geo = np.array([s[0] for s in samples[-800:]])
+                arr_mic = np.array([s[1] for s in samples[-800:]])
+                
+                # 각각의 영점을 차감하여 정렬
+                centered_geo = arr_geo - config.CURRENT_ZERO_GEO
+                centered_mic = arr_mic - config.CURRENT_ZERO_MIC
+                
+                self._rline.set_data(np.arange(len(centered_geo)), centered_geo)
+                self._rline_mic.set_data(np.arange(len(centered_mic)), centered_mic)
+                
+                # y축 범위 조절: 소음이 미세할 때도 세부 신호가 선명하게 보이도록 최소 -30 ~ 30 범위로 줌인
+                self._rec_ax1.relim()
+                self._rec_ax1.autoscale_view()
+                ymin, ymax = self._rec_ax1.get_ylim()
+                if (ymax - ymin) < 60:
+                    self._rec_ax1.set_ylim(-30, 30)
+                
+                # 히스토그램은 지오폰 기준으로 시각화
+                if len(centered_geo) > 20:
+                    counts, edges = np.histogram(centered_geo, bins=40)
+                    centers = (edges[:-1] + edges[1:]) / 2
+                    self._hline.set_data(centers, counts)
+                    self._rec_ax2.relim()
+                    self._rec_ax2.autoscale_view()
+                    # 히스토그램의 x축 범위도 시각 신호와 맞춰 최소 -30 ~ 30 범위 유지
+                    xmin, xmax = self._rec_ax2.get_xlim()
+                    if (xmax - xmin) < 60:
+                        self._rec_ax2.set_xlim(-30, 30)
+            else:
+                # 싱글 채널
+                arr = np.array(samples[-800:])
+                centered = arr - config.CURRENT_ZERO
+                self._rline.set_data(np.arange(len(centered)), centered)
+                
+                # y축 범위 조절: 소음이 미세할 때도 세부 신호가 선명하게 보이도록 최소 -30 ~ 30 범위로 줌인
+                self._rec_ax1.relim()
+                self._rec_ax1.autoscale_view()
+                ymin, ymax = self._rec_ax1.get_ylim()
+                if (ymax - ymin) < 60:
+                    self._rec_ax1.set_ylim(-30, 30)
+                    
+                if len(centered) > 20:
+                    counts, edges = np.histogram(centered, bins=40)
+                    centers = (edges[:-1] + edges[1:]) / 2
+                    self._hline.set_data(centers, counts)
+                    self._rec_ax2.relim()
+                    self._rec_ax2.autoscale_view()
+                    # 히스토그램의 x축 범위도 시각 신호와 맞춰 최소 -30 ~ 30 범위 유지
+                    xmin, xmax = self._rec_ax2.get_xlim()
+                    if (xmax - xmin) < 60:
+                        self._rec_ax2.set_xlim(-30, 30)
+            
+            self._status.configure(text=status_text, fg=color)
+            self._rec_canvas.draw()
+            self.root.update()
+        except Exception:
+            pass
+
+    # ══════════════════════════════════════════════
+    # 모드 2/3: 파라미터 최적화 그래프 (3패널 - 실시간 감지형 레이아웃)
+    # ══════════════════════════════════════════════
+    def show_optimization_graph(self, env_noise, animal_signal=None):
+        self._clear()
+        f = self.content
+
+        tk.Label(f, text='📊 SR 파라미터 최적화 및 신호 검증 대시보드', font=('Arial', 14, 'bold'), fg=TEXT, bg=BG).pack(pady=(10, 2))
+        self._opt_status = tk.Label(f, text='⏳ 준비 중...', font=('Arial', 11, 'bold'), fg='#fdcb6e', bg=BG)
+        self._opt_status.pack(pady=4)
+
+        self.fs          = config.FS
+        self.buffer_size = config.BUFFER_SIZE
+        self.half_n      = self.buffer_size // 2
+        self.x_time      = np.arange(self.buffer_size)
+        self.x_freq      = np.fft.fftfreq(self.buffer_size, 1/self.fs)[:self.half_n]
+
+        fig = Figure(figsize=(11.5, 6.5), facecolor=BG)
+        ax1 = fig.add_subplot(3, 1, 1, facecolor=PLOT_BG)
+        ax2 = fig.add_subplot(3, 1, 2, facecolor=PLOT_BG)
+        ax3 = fig.add_subplot(3, 1, 3, facecolor=PLOT_BG)
+        self._opt_axes = (ax1, ax2, ax3)
+
+        def _style(ax):
+            ax.tick_params(colors=MUTED)
+            for sp in ax.spines.values(): sp.set_color('#2d2d4e')
+            ax.grid(True, linestyle='--', alpha=0.2, color='#333')
+
+        # Subplot 1: Stage 1 (Filtered Output)
+        _style(ax1)
+        self._opt_line_raw, = ax1.plot(self.x_time, np.zeros(self.buffer_size),
+                                       color='#636e72', linewidth=1.0, alpha=0.6, label='Raw Input')
+        self._opt_line_clean, = ax1.plot(self.x_time, np.zeros(self.buffer_size),
+                                         color='#0984e3', linewidth=1.5, label='SDFT Filtered')
+        ax1.set_title('[Stage 1] SDFT Adaptive Filter — Raw vs. Denoised Signal', fontsize=9, fontweight='bold', color='#b2bec3')
+        ax1.set_xlim(0, self.buffer_size - 1)
+        ax1.set_ylabel('Amplitude', color=MUTED)
+        ax1.legend(loc='upper right', fontsize=8, framealpha=0.4)
+
+        # Subplot 2: Stage 2 (Stochastic Resonance & ACF)
+        _style(ax2)
+        self._opt_line_sr, = ax2.plot(self.x_time, np.zeros(self.buffer_size),
+                                      color='#a29bfe', linewidth=1.5, label='Bistable Binary State: sgn(x(t))')
+        ax2.axhline(0.0,  color='#d63031', linestyle='--', linewidth=1.5)
+        ax2.axhline( 1.0, color='#27ae60', linestyle=':',  linewidth=1.2)
+        ax2.axhline(-1.0, color='#27ae60', linestyle=':',  linewidth=1.2)
+        ax2.set_title('[Stage 2] Stochastic Resonance & ACF — N(t): Total Crossings / K(t): Noise Baseline / N-K: Pure Impulses (R >= 0.75)',
+                      fontsize=9, fontweight='bold', color='#b2bec3')
+        ax2.set_xlim(0, self.buffer_size - 1); ax2.set_ylim(-2.2, 2.2)
+        ax2.set_ylabel('State', color=MUTED)
+        ax2.legend(loc='upper right', fontsize=8, framealpha=0.4)
+
+        self._opt_sr_text = ax2.text(
+            0.02, 0.88, 'N(t): - | K(t): - | Net Events: Calculating...', transform=ax2.transAxes,
+            fontsize=8, fontweight='bold', color='#2c3e50',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.9))
+        self._opt_acf_text = ax2.text(
+            0.02, 0.72, 'ACF Rhythm (R): Calculating...', transform=ax2.transAxes,
+            fontsize=8, fontweight='bold', color='#2c3e50',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#f5eef8', edgecolor='#9b59b6', alpha=0.9))
+
+        # Subplot 3: Stage 3 (Real-time Spectrum)
+        _style(ax3)
+        self._opt_line_freq_raw, = ax3.plot(self.x_freq, np.zeros(self.half_n),
+                                            color='#636e72', linewidth=1.2, label='Raw Spectrum', alpha=0.6)
+        self._opt_line_freq_clean, = ax3.plot(self.x_freq, np.zeros(self.half_n),
+                                              color='#d63031', linewidth=1.8, label='Filtered Spectrum')
+        self._opt_line_freq_avg, = ax3.plot(self.x_freq, np.zeros(self.half_n),
+                                            color='#e67e22', linestyle=':', linewidth=1.8, label='Long-term Avg')
+        ax3.set_title('[Stage 3] Real-time Spectrum — Yellow: Tracked Noise Attenuation Band',
+                      fontsize=9, fontweight='bold', color='#b2bec3')
+        ax3.set_xlim(0, 50.0)
+        ax3.set_xlabel('Frequency (Hz)', color=MUTED); ax3.set_ylabel('Magnitude', color=MUTED)
+        ax3.legend(loc='upper right', fontsize=8, framealpha=0.4)
+
+        self._opt_peak_text = ax3.text(
+            0.02, 0.88, 'Tracked Peak: Calculating...', transform=ax3.transAxes,
+            fontsize=8, fontweight='bold', color='#7f8c8d',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#fcf3cf', edgecolor='#f1c40f', alpha=0.9))
+
+        self._opt_noise_span = None
+
+        fig.tight_layout(pad=1.5)
+        cv = FigureCanvasTkAgg(fig, master=f)
+        cv.draw()
+        cv.get_tk_widget().pack(fill='both', expand=True, padx=10, pady=6)
+        self._opt_canvas = cv
+
+    def update_optimization_graph(self, status, raw_signal=None, filtered_signal=None, 
+                                   sr_signal=None, N_t=0, K_t=0, net_events=0, 
+                                   acf_r=0.0, cadence=0.0, raw_fft=None, clean_fft=None, 
+                                   avg_fft=None, tracked_peak=0.0, noise_bands=None, color='#fdcb6e'):
+        if not hasattr(self, '_opt_canvas'): return
+        try:
+            self._opt_status.configure(text=status, fg=color)
+            ax1, ax2, ax3 = self._opt_axes
+
+            # 1단계 그리기 (Raw & SDFT Filtered)
+            if raw_signal is not None:
+                n_len = min(len(raw_signal), self.buffer_size)
+                self._opt_line_raw.set_data(np.arange(n_len), raw_signal[:n_len])
+            if filtered_signal is not None:
+                n_len = min(len(filtered_signal), self.buffer_size)
+                self._opt_line_clean.set_data(np.arange(n_len), filtered_signal[:n_len])
+            ax1.relim(); ax1.autoscale_view()
+            ax1.set_xlim(0, self.buffer_size - 1)
+
+            # 2단계 그리기 (Stochastic Resonance & ACF)
+            if sr_signal is not None:
+                n_len = min(len(sr_signal), self.buffer_size)
+                self._opt_line_sr.set_data(np.arange(n_len), sr_signal[:n_len])
+                
+                # 텍스트 박스 업데이트
+                self._opt_sr_text.configure(
+                    text=f'N(t) Total: {N_t} | K(t) Noise: {K_t} | Net Events (N-K): {net_events}')
+                
+                acf_status = "No periodic rhythm" if acf_r < config.ACF_R_THRESHOLD else f"Rhythm detected! Cadence={cadence:.2f}s"
+                self._opt_acf_text.configure(
+                    text=f'ACF Rhythm (R): {acf_r:.2f} ({acf_status})')
+
+            # 3단계 그리기 (Spectrum)
+            if raw_fft is not None:
+                self._opt_line_freq_raw.set_data(self.x_freq, raw_fft[:self.half_n])
+            if clean_fft is not None:
+                self._opt_line_freq_clean.set_data(self.x_freq, clean_fft[:self.half_n])
+            if avg_fft is not None:
+                self._opt_line_freq_avg.set_data(self.x_freq, avg_fft[:self.half_n])
+            ax3.relim(); ax3.autoscale_view()
+            ax3.set_xlim(0, 50.0)
+
+            # 노이즈 피크 텍스트 박스 업데이트
+            if tracked_peak > 0:
+                self._opt_peak_text.configure(
+                    text=f'Tracked Peak: {tracked_peak:.1f}Hz (+/-{config.NOISE_BAND_WIDTH/2:.1f}Hz)')
+            else:
+                self._opt_peak_text.configure(text='Tracked Peak: -- Hz')
+            
+            # 노이즈 감쇄 밴드 음영 표시
+            if noise_bands:
+                if getattr(self, '_opt_noise_span', None) is not None:
+                    try: self._opt_noise_span.remove()
+                    except: pass
+                # 노이즈 밴드 중 첫 번째 밴드를 하이라이트 표시
+                b = noise_bands[0]
+                self._opt_noise_span = ax3.axvspan(b[0], b[1], color='#f1c40f', alpha=0.15, label='Tracked Noise Band')
+
+            self._opt_canvas.draw()
+            self.root.update()
+        except Exception:
+            pass
+
+    # ══════════════════════════════════════════════
+    # 모드 5: 실시간 감지 3패널 그래프
+    # ══════════════════════════════════════════════
+    def setup_live_detection(self, on_manual_band_change=None):
         self.on_manual_band_change = on_manual_band_change
         self.manual_bands = []
-        
-        self.fs = config.FS
+        self._clear()
+        f = self.content
+
+        self.fs          = config.FS
         self.buffer_size = config.BUFFER_SIZE
-        self.half_n = self.buffer_size // 2
-        
-        self.x_time = np.arange(self.buffer_size)
-        self.x_freq = np.fft.fftfreq(self.buffer_size, 1/self.fs)[:self.half_n]
+        self.half_n      = self.buffer_size // 2
+        self.x_time      = np.arange(self.buffer_size)
+        self.x_freq      = np.fft.fftfreq(self.buffer_size, 1/self.fs)[:self.half_n]
         self.noise_band_width = config.NOISE_BAND_WIDTH
-        
-        plt.ion()
-        self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3, 1, figsize=(13, 11))
-        
-        # --- [추가] SpanSelector 설정 (Spectrum 드래그 감쇄용) ---
-        self.span = SpanSelector(self.ax3, self.onselect, 'horizontal', useblit=True,
-                                 props=dict(alpha=0.5, facecolor='#fab1a0'),
-                                 interactive=True, drag_from_anywhere=True)
-        
-        # 'c' 키를 누르면 수동 감쇄 영역 초기화
-        self.fig.canvas.mpl_connect('key_press_event', self.on_key)
-        
-        self.fig.canvas.manager.set_window_title('Wildlife Detection System | Interactive Analysis')
-        self.fig.patch.set_facecolor('#f0f3f7')
-        
-        # Stage 1 Setup
-        self.line_time_clean, = self.ax1.plot(self.x_time, np.zeros(self.buffer_size), color='#0984e3', linewidth=2.0, label='Filtered Output')
-        self.ax1.set_title('[Stage 1] SDFT Adaptive Filter — Continuous Noise Suppressed, Footsteps Preserved', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
-        self.ax1.set_xlim(0, self.buffer_size - 1)
-        self.ax1.set_xlabel(f'Sample Index (Buffer: {self.buffer_size} samples = {self.buffer_size/self.fs*1000:.0f}ms)')
-        self.ax1.set_ylabel('Amplitude')
-        self.ax1.legend(loc='upper right', framealpha=0.9, fontsize=9)
-        self.ax1.grid(True, linestyle='--', alpha=0.4)
-        self.ax1.set_facecolor('#ffffff')
-        
-        self.alert_text = self.ax1.text(0.5, 1.13, 'STATUS: MONITORING', transform=self.ax1.transAxes, fontsize=11, fontweight='bold', color='white', ha='center', va='center', bbox=dict(boxstyle='round,pad=0.5', facecolor='#00b894', edgecolor='none', alpha=0.92))
-        self.duration_text = self.ax1.text(0.02, 0.88, 'Step Event: Waiting...', transform=self.ax1.transAxes, fontsize=10, fontweight='bold', color='#2d3436', bbox=dict(boxstyle='round,pad=0.4', facecolor='#ffeaa7', edgecolor='#fdcb6e', alpha=0.9))
-        self.bypass_label = self.ax1.text(0.98, 0.12, 'Transient Bypass: OFF', transform=self.ax1.transAxes, fontsize=9, fontweight='bold', color='#b2bec3', ha='right', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='#dfe6e9'))
-        
-        # Stage 2 Setup
-        self.line_time_sr, = self.ax2.plot(self.x_time, np.zeros(self.buffer_size), color='#a29bfe', linewidth=1.5, label='Bistable Binary State: sgn(x(t))')
-        self.ax2.axhline(0.0, color='#d63031', linestyle='--', linewidth=1.5, label='Center Potential Barrier (x=0)')
-        self.ax2.axhline(1.0, color='#27ae60', linestyle=':', linewidth=1.2, label='Stable Well (+1.0)')
-        self.ax2.axhline(-1.0, color='#27ae60', linestyle=':', linewidth=1.2, label='Stable Well (-1.0)')
-        self.ax2.set_title(f'[Stage 2] Stochastic Resonance & ACF — N(t): Total Crossings / K(t): Noise Baseline / N-K: Pure Impulses (R >= {config.ACF_R_THRESHOLD})', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
-        self.ax2.set_xlim(0, self.buffer_size - 1)
-        self.ax2.set_ylim(-2.2, 2.2)
-        self.ax2.set_xlabel('Sample Index')
-        self.ax2.set_ylabel('Amplitude')
-        self.ax2.legend(loc='upper right', framealpha=0.9, fontsize=9)
-        self.ax2.grid(True, linestyle='--', alpha=0.4)
-        self.ax2.set_facecolor('#ffffff')
-        
-        self.sr_text = self.ax2.text(0.02, 0.88, 'N(t): - | K(t): - | Net Events (N-K): Waiting...', transform=self.ax2.transAxes, fontsize=10, fontweight='bold', color='#2c3e50', bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.9))
-        self.acf_text = self.ax2.text(0.02, 0.74, 'ACF Rhythm (R): Waiting...', transform=self.ax2.transAxes, fontsize=10, fontweight='bold', color='#2c3e50', ha='left', bbox=dict(boxstyle='round,pad=0.4', facecolor='#f5eef8', edgecolor='#9b59b6', alpha=0.9))
-        
-        # Stage 3 Setup
-        self.line_freq_raw, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#b2bec3', linewidth=1.5, label='Instantaneous FFT M(t)', alpha=0.7)
-        self.line_freq_clean, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#d63031', linewidth=2.0, label='Filtered Spectrum')
-        self.line_freq_avg, = self.ax3.plot(self.x_freq, np.zeros(self.half_n), color='#e67e22', linestyle=':', linewidth=2.0, label=f'Long-term Avg M_avg (a={config.ALPHA_EMA})')
-        self.ax3.axvspan(config.NOISE_MIN_FREQ, config.NOISE_MAX_FREQ, color='#dfe6e9', alpha=0.2, label=f'Search Range ({config.NOISE_MIN_FREQ}-{config.NOISE_MAX_FREQ}Hz)')
-        
+
+        fig = Figure(figsize=(12, 7.8), facecolor=BG)
+        ax1 = fig.add_subplot(3, 1, 1, facecolor=PLOT_BG)
+        ax2 = fig.add_subplot(3, 1, 2, facecolor=PLOT_BG)
+        ax3 = fig.add_subplot(3, 1, 3, facecolor=PLOT_BG)
+        self.ax1, self.ax2, self.ax3 = ax1, ax2, ax3
+
+        def _style(ax):
+            ax.tick_params(colors=MUTED)
+            for sp in ax.spines.values(): sp.set_color('#2d2d4e')
+            ax.grid(True, linestyle='--', alpha=0.25, color='#333')
+
+        # Stage 1
+        _style(ax1)
+        self.line_time_clean, = ax1.plot(self.x_time, np.zeros(self.buffer_size),
+                                          color='#0984e3', linewidth=1.8, label='Filtered Output')
+        ax1.set_title('[Stage 1] SDFT Adaptive Filter — Noise Suppressed, Footsteps Preserved',
+                      fontsize=10, fontweight='bold', color='#b2bec3')
+        ax1.set_xlim(0, self.buffer_size - 1)
+        ax1.set_xlabel(f'Sample Index (Buffer: {self.buffer_size})', color=MUTED)
+        ax1.set_ylabel('Amplitude', color=MUTED)
+        ax1.legend(loc='upper right', fontsize=8, framealpha=0.4)
+
+        self.alert_text = ax1.text(
+            0.5, 1.13, 'STATUS: MONITORING', transform=ax1.transAxes,
+            fontsize=10, fontweight='bold', color='white', ha='center', va='center',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='#00b894', edgecolor='none', alpha=0.92))
+        self.duration_text = ax1.text(
+            0.02, 0.88, 'Step Event: Waiting...', transform=ax1.transAxes,
+            fontsize=9, fontweight='bold', color='#2d3436',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#ffeaa7', edgecolor='#fdcb6e', alpha=0.9))
+        self.bypass_label = ax1.text(
+            0.98, 0.12, 'Transient Bypass: OFF', transform=ax1.transAxes,
+            fontsize=8, fontweight='bold', color='#b2bec3', ha='right',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG, alpha=0.8, edgecolor='#333'))
+
+        # Stage 2
+        _style(ax2)
+        self.line_time_sr, = ax2.plot(self.x_time, np.zeros(self.buffer_size),
+                                       color='#a29bfe', linewidth=1.5, label='Bistable State sgn(x(t))')
+        ax2.axhline(0.0,  color='#d63031', linestyle='--', linewidth=1.5)
+        ax2.axhline( 1.0, color='#27ae60', linestyle=':',  linewidth=1.2)
+        ax2.axhline(-1.0, color='#27ae60', linestyle=':',  linewidth=1.2)
+        ax2.set_title(f'[Stage 2] Stochastic Resonance & ACF  (R>={config.ACF_R_THRESHOLD})',
+                      fontsize=10, fontweight='bold', color='#b2bec3')
+        ax2.set_xlim(0, self.buffer_size - 1); ax2.set_ylim(-2.2, 2.2)
+        ax2.set_xlabel('Sample Index', color=MUTED); ax2.set_ylabel('State', color=MUTED)
+        ax2.legend(loc='upper right', fontsize=8, framealpha=0.4)
+
+        self.sr_text = ax2.text(
+            0.02, 0.88, 'N(t): - | K(t): - | Net Events: Waiting...', transform=ax2.transAxes,
+            fontsize=9, fontweight='bold', color='#2c3e50',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.9))
+        self.acf_text = ax2.text(
+            0.02, 0.72, 'ACF Rhythm (R): Waiting...', transform=ax2.transAxes,
+            fontsize=9, fontweight='bold', color='#2c3e50',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#f5eef8', edgecolor='#9b59b6', alpha=0.9))
+
+        # Stage 3
+        _style(ax3)
+        self.line_freq_raw,   = ax3.plot(self.x_freq, np.zeros(self.half_n),
+                                          color='#636e72', linewidth=1.2, label='Instantaneous FFT', alpha=0.7)
+        self.line_freq_clean, = ax3.plot(self.x_freq, np.zeros(self.half_n),
+                                          color='#d63031', linewidth=1.8, label='Filtered Spectrum')
+        self.line_freq_avg,   = ax3.plot(self.x_freq, np.zeros(self.half_n),
+                                          color='#e67e22', linestyle=':', linewidth=1.8, label='Long-term Avg')
+        ax3.axvspan(config.NOISE_MIN_FREQ, config.NOISE_MAX_FREQ, color='#dfe6e9', alpha=0.06)
         self.noise_band_patches = []
-        self.ax3.set_title('[Stage 3] Real-time Spectrum — Yellow: Tracked Noise Attenuation Band', fontsize=11, fontweight='bold', pad=10, color='#2d3436')
-        self.ax3.set_xlim(0, self.fs / 2)
-        self.ax3.set_xlabel('Frequency (Hz)')
-        self.ax3.set_ylabel('Magnitude')
-        self.ax3.legend(loc='upper right', framealpha=0.9, fontsize=9)
-        self.ax3.grid(True, linestyle='--', alpha=0.4)
-        self.ax3.set_facecolor('#ffffff')
-        
-        self.band_info_text = self.ax3.text(0.02, 0.88, 'Tracked Peak: Initializing...', transform=self.ax3.transAxes, fontsize=10, fontweight='bold', color='#2d3436', bbox=dict(boxstyle='round,pad=0.4', facecolor='#fff3cd', edgecolor='#ffc107', alpha=0.9))
-        self.hint_text = self.ax3.text(0.98, 0.05, 'Drag to attenuate | Press "c" to clear', transform=self.ax3.transAxes, fontsize=8, color='#636e72', ha='right', alpha=0.7)
-        
-        plt.tight_layout(pad=2.0)
-        
-    def onselect(self, xmin, xmax):
-        """드래그 완료 시 호출되는 콜백 (수동 감쇄 영역 추가)"""
-        if abs(xmax - xmin) < 0.2:
-            return
-            
+        ax3.set_title('[Stage 3] Real-time Spectrum — Noise Attenuation Bands',
+                      fontsize=10, fontweight='bold', color='#b2bec3')
+        ax3.set_xlim(0, self.fs / 2)
+        ax3.set_xlabel('Frequency (Hz)', color=MUTED); ax3.set_ylabel('Magnitude', color=MUTED)
+        ax3.legend(loc='upper right', fontsize=8, framealpha=0.4)
+
+        self.band_info_text = ax3.text(
+            0.02, 0.88, 'Tracked Peak: Initializing...', transform=ax3.transAxes,
+            fontsize=9, fontweight='bold', color='#2d3436',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#fff3cd', edgecolor='#ffc107', alpha=0.9))
+
+        fig.tight_layout(pad=2.5)
+
+        cv = FigureCanvasTkAgg(fig, master=f)
+        cv.draw()
+        cv.get_tk_widget().pack(fill='both', expand=True)
+        self.live_canvas = cv
+        self.live_fig    = fig
+
+        self.span = SpanSelector(
+            ax3, self._onselect, 'horizontal', useblit=True,
+            props=dict(alpha=0.5, facecolor='#fab1a0'),
+            interactive=True, drag_from_anywhere=True)
+        fig.canvas.mpl_connect('key_press_event', self._on_key)
+
+        self.root.update()
+
+    def _onselect(self, xmin, xmax):
+        if abs(xmax - xmin) < 0.2: return
         self.manual_bands.append((xmin, xmax))
         if self.on_manual_band_change:
             self.on_manual_band_change(self.manual_bands)
-        print(f"수동 감쇄 대역 추가: {xmin:.1f}Hz ~ {xmax:.1f}Hz")
 
-    def on_key(self, event):
-        """키보드 입력 처리 ('c' 누르면 초기화)"""
+    def _on_key(self, event):
         if event.key == 'c':
             self.manual_bands.clear()
             if self.on_manual_band_change:
                 self.on_manual_band_change(self.manual_bands)
-            print("수동 감쇄 대역 초기화 완료")
 
-    def update(self, filtered_signal, x_arr_total, M_t, clean_fft_mag, M_avg, detected_noise_bands, 
-               is_recording, step_completed, duration, avg_duration, step_count, transient_detected, 
+    def update(self, filtered_signal, x_arr_total, M_t, clean_fft_mag, M_avg,
+               detected_noise_bands, is_recording, step_completed, duration,
+               avg_duration, step_count, transient_detected,
                N_t, K_t, net_events, acf_r, cadence):
-        
+
         self.line_time_clean.set_ydata(filtered_signal)
-        max_clean_amp = max(np.max(np.abs(filtered_signal)), 20.0)
-        self.ax1.set_ylim(-max_clean_amp * 1.3, max_clean_amp * 1.3)
-        
+        mx = max(np.max(np.abs(filtered_signal)), 20.0)
+        self.ax1.set_ylim(-mx * 1.3, mx * 1.3)
+
         if is_recording:
             self.duration_text.set_text('Step Event: [ Recording... ]')
             self.duration_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#55efc4', edgecolor='#00b894', alpha=0.9))
         elif step_completed:
             self.duration_text.set_text(f'Step Event: {duration:.3f}s (Avg: {avg_duration:.3f}s | N={step_count})')
             self.duration_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#74b9ff', edgecolor='#0984e3', alpha=0.9))
-            
-        if transient_detected:
-            self.bypass_label.set_text('Transient Bypass: ON')
-            self.bypass_label.set_color('#27ae60')
-        else:
-            self.bypass_label.set_text('Transient Bypass: OFF')
-            self.bypass_label.set_color('#b2bec3')
-            
-        # 최종 경보(Alert) 조건 검증 (보고서 흐름 완벽 매핑)
-        # 1. 1차 판정: 공명 전이(N-K) 횟수가 기준치 이상인가?
+
+        self.bypass_label.set_text('Transient Bypass: ' + ('ON' if transient_detected else 'OFF'))
+        self.bypass_label.set_color('#27ae60' if transient_detected else '#b2bec3')
+
         if net_events >= config.ALERT_NET_EVENTS:
-            # 2. 최종 판정: ACF 주기가 동물의 리듬과 일치하는가? (R값이 임계치(0.75) 이상인가?)
             if acf_r >= config.ACF_R_THRESHOLD:
-                self.alert_text.set_text(f'CONFIRMED WILDLIFE! (N-K: {net_events} | ACF R={acf_r:.2f} | {cadence:.2f}s Rhythm)')
+                self.alert_text.set_text(f'CONFIRMED WILDLIFE! (N-K:{net_events} | R={acf_r:.2f} | {cadence:.2f}s)')
                 self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
-                self.fig.patch.set_facecolor('#fff0f0')
             else:
-                self.alert_text.set_text(f'WARNING: IMPACTS DETECTED (N-K: {net_events}) - Verifying Rhythm...')
+                self.alert_text.set_text(f'WARNING: IMPACTS DETECTED (N-K:{net_events}) - Verifying...')
                 self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#e67e22', edgecolor='none', alpha=0.97))
-                self.fig.patch.set_facecolor('#fdf2e9')
         else:
             self.alert_text.set_text('STATUS: MONITORING')
             self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#00b894', edgecolor='none', alpha=0.92))
-            self.fig.patch.set_facecolor('#f0f3f7')
-            
+
         self.line_time_sr.set_ydata(np.sign(x_arr_total))
-        self.sr_text.set_text(f'N(t) Total: {N_t} | K(t) Noise: {K_t} | Net Events (N-K): {net_events}')
-        if net_events > 0:
-            self.sr_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#a3e4d7', edgecolor='#1abc9c', alpha=0.95))
-        else:
-            self.sr_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.85))
-            
-        if acf_r >= config.ACF_R_THRESHOLD:
-            self.acf_text.set_text(f'ACF Rhythm (R): {acf_r:.2f} (Cadence: {cadence:.2f}s)')
-            self.acf_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#d7bde2', edgecolor='#8e44ad', alpha=0.95))
-        else:
-            self.acf_text.set_text(f'ACF Rhythm (R): {acf_r:.2f} (No periodic rhythm)')
-            self.acf_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#f5eef8', edgecolor='#9b59b6', alpha=0.85))
-            
+        self.sr_text.set_text(f'N(t):{N_t} | K(t):{K_t} | Net Events(N-K):{net_events}')
+        self.sr_text.set_bbox(dict(boxstyle='round,pad=0.4',
+                                   facecolor='#a3e4d7' if net_events > 0 else '#e8f8f5',
+                                   edgecolor='#1abc9c', alpha=0.9))
+
+        self.acf_text.set_text(f'ACF Rhythm (R):{acf_r:.2f}' +
+                                (f' (Cadence:{cadence:.2f}s)' if acf_r >= config.ACF_R_THRESHOLD else ' (No rhythm)'))
+        self.acf_text.set_bbox(dict(boxstyle='round,pad=0.4',
+                                    facecolor='#d7bde2' if acf_r >= config.ACF_R_THRESHOLD else '#f5eef8',
+                                    edgecolor='#8e44ad', alpha=0.9))
+
         self.line_freq_raw.set_ydata(M_t)
         self.line_freq_clean.set_ydata(clean_fft_mag)
         self.line_freq_avg.set_ydata(M_avg)
-        
-        for p in self.noise_band_patches:
-            p.remove()
+
+        for p in self.noise_band_patches: p.remove()
         self.noise_band_patches.clear()
-        
-        band_info_parts = []
+        parts = []
         for (blo, bhi, bpeak) in detected_noise_bands:
-            patch = self.ax3.axvspan(blo, bhi, color='#ffeaa7', alpha=0.6)
-            self.noise_band_patches.append(patch)
-            band_info_parts.append(f'{bpeak:.1f}Hz (+/-{self.noise_band_width}Hz)')
-            
-        if band_info_parts:
-            self.band_info_text.set_text('Tracked Peak: ' + ' | '.join(band_info_parts))
-        else:
-            self.band_info_text.set_text('Tracked Peak: None')
-            
-        max_mag = max(np.max(M_t), np.max(M_avg), 10.0)
-        self.ax3.set_ylim(0, max_mag * 1.3)
-        
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-        
+            self.noise_band_patches.append(self.ax3.axvspan(blo, bhi, color='#ffeaa7', alpha=0.55))
+            parts.append(f'{bpeak:.1f}Hz')
+        self.band_info_text.set_text('Tracked Peak: ' + (', '.join(parts) if parts else 'None'))
+
+        mx_mag = max(np.max(M_t), np.max(M_avg), 10.0)
+        self.ax3.set_ylim(0, mx_mag * 1.3)
+
+        self.live_canvas.draw()
+        self.live_canvas.flush_events()
+        self.root.update()
+
+    # ── 공통 유틸 ──────────────────────────────────
+    def is_alive(self):
+        try:
+            return self.root.winfo_exists() and not self._quit
+        except Exception:
+            return False
+
+    def _on_quit(self):
+        self._quit = True
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except Exception:
+            pass
+
     def close(self):
-        plt.ioff()
-        plt.close(self.fig)
+        self._on_quit()

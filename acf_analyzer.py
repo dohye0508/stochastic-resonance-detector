@@ -8,7 +8,7 @@ class ACFPeriodicityAnalyzer:
     야생동물 특유의 일정한 보행 리듬(주기성)이 존재하는지 수학적으로 판정합니다.
     """
     def __init__(self):
-        self.r_threshold = config.ACF_R_THRESHOLD
+        self.r_threshold = getattr(config, 'ACF_R_THRESHOLD', getattr(config, 'ACF_R_THRESHOLD_GEO', 0.75))
         self.lag_min = config.ACF_LAG_MIN
         self.lag_max = config.ACF_LAG_MAX
 

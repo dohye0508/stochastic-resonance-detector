@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-[보고서 4.2 실측 데이터 수집] 직접 측정한 동물 발자국 신호 기록 스크립트 (Tkinter GUI 듀얼 채널 수집기)
+[보고서 4.2 실측 데이터 수집] 직접 측정한 동물 발자국 신호 기록 스크립트 (Tkinter GUI 듀얼 채널 수집기) - 듀얼 채널 백업본
 ================================================================================
 GUI 창에서 동물의 이름을 적고 [시작] 버튼을 누른 후, [중지 및 저장] 버튼을 누르면
 원하는 시간만큼 지오폰과 마이크 데이터를 정확하게 녹음하고 저장할 수 있습니다.
@@ -19,7 +19,7 @@ import config
 class StepRecorderGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("야생동물 발걸음 측정기 (듀얼 채널)")
+        self.root.title("야생동물 발걸음 측정기 (듀얼 채널) - 백업본")
         self.root.geometry("450x380")
         self.root.resizable(False, False)
         
