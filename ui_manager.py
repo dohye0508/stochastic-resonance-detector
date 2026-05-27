@@ -33,9 +33,7 @@ MENU_BUTTONS = [
 
 SENSOR_FOLDERS = {
     '1': ('Geophone',          'geophone'),
-    '2': ('MEMS microphone',   'microphone'),
-    '3': ('surround noise',    'surround_noise'),
-    '4': ('Dual channel',      'dual_sensor'),
+    '2': ('surround noise',    'surround_noise'),
 }
 
 
@@ -142,10 +140,9 @@ class WildlifeUI:
     # ══════════════════════════════════════════════
     # 모드 1/4: 녹화 / 배경 소음 수집 그래프 (2패널)
     # ══════════════════════════════════════════════
-    def show_recording_graph(self, title, subtitle, dual=False):
+    def show_recording_graph(self, title, subtitle):
         self._clear()
         f = self.content
-        self._is_dual_mode = dual
 
         tk.Label(f, text=title,    font=('Arial', 14, 'bold'), fg=TEXT,  bg=BG).pack(pady=(10, 2))
         tk.Label(f, text=subtitle, font=('Arial', 10),         fg=MUTED, bg=BG).pack()
@@ -165,12 +162,7 @@ class WildlifeUI:
         ax1.set_title('실시간 센서 신호', color='#b2bec3', fontsize=10)
         ax1.set_ylabel('Amplitude', color=MUTED)
         
-        if dual:
-            self._rline, = ax1.plot([], [], color='#00cec9', linewidth=1.2, label='Geophone (A0)')
-            self._rline_mic, = ax1.plot([], [], color='#ff7675', linewidth=1.2, label='MEMS Mic (A1)')
-            ax1.legend(loc='upper right', facecolor=PLOT_BG, edgecolor='#2d2d4e', labelcolor=TEXT, fontsize=8)
-        else:
-            self._rline, = ax1.plot([], [], color='#00cec9', linewidth=1.2)
+        self._rline, = ax1.plot([], [], color='#00cec9', linewidth=1.2)
             
         self._hline, = ax2.plot([], [], color='#a29bfe', linewidth=1.5)
         ax2.set_title('진폭 분포 (Histogram)', color='#b2bec3', fontsize=10)
@@ -185,60 +177,27 @@ class WildlifeUI:
     def update_recording_graph(self, samples, status_text, color='#fdcb6e'):
         if not hasattr(self, '_rec_canvas'): return
         try:
-            is_dual = getattr(self, '_is_dual_mode', False)
-            if is_dual:
-                # 듀얼 채널인 경우: samples는 [(val0, val1), ...] 형태
-                arr_geo = np.array([s[0] for s in samples[-800:]])
-                arr_mic = np.array([s[1] for s in samples[-800:]])
+            arr = np.array(samples[-800:])
+            centered = arr - config.CURRENT_ZERO
+            self._rline.set_data(np.arange(len(centered)), centered)
+            
+            # y축 범위 조절: 소음이 미세할 때도 세부 신호가 선명하게 보이도록 최소 -30 ~ 30 범위로 줌인
+            self._rec_ax1.relim()
+            self._rec_ax1.autoscale_view()
+            ymin, ymax = self._rec_ax1.get_ylim()
+            if (ymax - ymin) < 60:
+                self._rec_ax1.set_ylim(-30, 30)
                 
-                # 각각의 영점을 차감하여 정렬
-                centered_geo = arr_geo - config.CURRENT_ZERO_GEO
-                centered_mic = arr_mic - config.CURRENT_ZERO_MIC
-                
-                self._rline.set_data(np.arange(len(centered_geo)), centered_geo)
-                self._rline_mic.set_data(np.arange(len(centered_mic)), centered_mic)
-                
-                # y축 범위 조절: 소음이 미세할 때도 세부 신호가 선명하게 보이도록 최소 -30 ~ 30 범위로 줌인
-                self._rec_ax1.relim()
-                self._rec_ax1.autoscale_view()
-                ymin, ymax = self._rec_ax1.get_ylim()
-                if (ymax - ymin) < 60:
-                    self._rec_ax1.set_ylim(-30, 30)
-                
-                # 히스토그램은 지오폰 기준으로 시각화
-                if len(centered_geo) > 20:
-                    counts, edges = np.histogram(centered_geo, bins=40)
-                    centers = (edges[:-1] + edges[1:]) / 2
-                    self._hline.set_data(centers, counts)
-                    self._rec_ax2.relim()
-                    self._rec_ax2.autoscale_view()
-                    # 히스토그램의 x축 범위도 시각 신호와 맞춰 최소 -30 ~ 30 범위 유지
-                    xmin, xmax = self._rec_ax2.get_xlim()
-                    if (xmax - xmin) < 60:
-                        self._rec_ax2.set_xlim(-30, 30)
-            else:
-                # 싱글 채널
-                arr = np.array(samples[-800:])
-                centered = arr - config.CURRENT_ZERO
-                self._rline.set_data(np.arange(len(centered)), centered)
-                
-                # y축 범위 조절: 소음이 미세할 때도 세부 신호가 선명하게 보이도록 최소 -30 ~ 30 범위로 줌인
-                self._rec_ax1.relim()
-                self._rec_ax1.autoscale_view()
-                ymin, ymax = self._rec_ax1.get_ylim()
-                if (ymax - ymin) < 60:
-                    self._rec_ax1.set_ylim(-30, 30)
-                    
-                if len(centered) > 20:
-                    counts, edges = np.histogram(centered, bins=40)
-                    centers = (edges[:-1] + edges[1:]) / 2
-                    self._hline.set_data(centers, counts)
-                    self._rec_ax2.relim()
-                    self._rec_ax2.autoscale_view()
-                    # 히스토그램의 x축 범위도 시각 신호와 맞춰 최소 -30 ~ 30 범위 유지
-                    xmin, xmax = self._rec_ax2.get_xlim()
-                    if (xmax - xmin) < 60:
-                        self._rec_ax2.set_xlim(-30, 30)
+            if len(centered) > 20:
+                counts, edges = np.histogram(centered, bins=40)
+                centers = (edges[:-1] + edges[1:]) / 2
+                self._hline.set_data(centers, counts)
+                self._rec_ax2.relim()
+                self._rec_ax2.autoscale_view()
+                # 히스토그램의 x축 범위도 시각 신호와 맞춰 최소 -30 ~ 30 범위 유지
+                xmin, xmax = self._rec_ax2.get_xlim()
+                if (xmax - xmin) < 60:
+                    self._rec_ax2.set_xlim(-30, 30)
             
             self._status.configure(text=status_text, fg=color)
             self._rec_canvas.draw()
@@ -405,9 +364,6 @@ class WildlifeUI:
         except Exception:
             pass
 
-    # ══════════════════════════════════════════════
-    # 모드 5: 실시간 감지 3패널 그래프
-    # ══════════════════════════════════════════════
     def setup_live_detection(self, on_manual_band_change=None):
         self.on_manual_band_change = on_manual_band_change
         self.manual_bands = []
@@ -436,8 +392,6 @@ class WildlifeUI:
         _style(ax1)
         self.line_time_clean_geo, = ax1.plot(self.x_time, np.zeros(self.buffer_size),
                                               color='#00cec9', linewidth=1.5, label='Geophone (A0)')
-        self.line_time_clean_mic, = ax1.plot(self.x_time, np.zeros(self.buffer_size),
-                                              color='#ff7675', linewidth=1.5, label='MEMS Mic (A1)')
         ax1.set_title('[Stage 1] SDFT Adaptive Filter — Noise Suppressed, Footsteps Preserved',
                       fontsize=10, fontweight='bold', color='#b2bec3')
         ax1.set_xlim(0, self.buffer_size - 1)
@@ -446,7 +400,7 @@ class WildlifeUI:
         ax1.legend(loc='upper right', fontsize=8, framealpha=0.4)
 
         self.alert_text = ax1.text(
-            0.5, 1.13, 'STATUS: MONITORING DUAL CHANNELS', transform=ax1.transAxes,
+            0.5, 1.13, 'STATUS: MONITORING GEOPHONE', transform=ax1.transAxes,
             fontsize=10, fontweight='bold', color='white', ha='center', va='center',
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#00b894', edgecolor='none', alpha=0.92))
         self.duration_text = ax1.text(
@@ -454,7 +408,7 @@ class WildlifeUI:
             fontsize=9, fontweight='bold', color='#2d3436',
             bbox=dict(boxstyle='round,pad=0.4', facecolor='#ffeaa7', edgecolor='#fdcb6e', alpha=0.9))
         self.bypass_label = ax1.text(
-            0.98, 0.12, 'Transient Bypass: OFF', transform=ax1.transAxes,
+            0.98, 0.12, 'Transient Geo: OFF', transform=ax1.transAxes,
             fontsize=8, fontweight='bold', color='#b2bec3', ha='right',
             bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG, alpha=0.8, edgecolor='#333'))
 
@@ -462,8 +416,6 @@ class WildlifeUI:
         _style(ax2)
         self.line_time_sr_geo, = ax2.plot(self.x_time, np.zeros(self.buffer_size),
                                            color='#00cec9', linewidth=1.3, label='Geophone (A0) State')
-        self.line_time_sr_mic, = ax2.plot(self.x_time, np.zeros(self.buffer_size),
-                                           color='#ff7675', linewidth=1.3, label='MEMS Mic (A1) State')
         ax2.axhline(0.0,  color='#636e72', linestyle='--', linewidth=1.0)
         ax2.axhline( 1.0, color='#27ae60', linestyle=':',  linewidth=1.2)
         ax2.axhline(-1.0, color='#27ae60', linestyle=':',  linewidth=1.2)
@@ -474,7 +426,7 @@ class WildlifeUI:
         ax2.legend(loc='upper right', fontsize=8, framealpha=0.4)
 
         self.sr_text = ax2.text(
-            0.02, 0.88, 'Geo N(t): - | Mic N(t): - | Net Events: Waiting...', transform=ax2.transAxes,
+            0.02, 0.88, 'Geo N(t): - | Net Events: Waiting...', transform=ax2.transAxes,
             fontsize=9, fontweight='bold', color='#2c3e50',
             bbox=dict(boxstyle='round,pad=0.4', facecolor='#e8f8f5', edgecolor='#1abc9c', alpha=0.9))
         self.acf_text = ax2.text(
@@ -485,15 +437,11 @@ class WildlifeUI:
         # Stage 3
         _style(ax3)
         self.line_freq_raw_geo,   = ax3.plot(self.x_freq, np.zeros(self.half_n),
-                                              color='#00cec9', linewidth=1.0, label='Geo FFT', alpha=0.4)
-        self.line_freq_raw_mic,   = ax3.plot(self.x_freq, np.zeros(self.half_n),
-                                              color='#ff7675', linewidth=1.0, label='Mic FFT', alpha=0.4)
+                                               color='#00cec9', linewidth=1.0, label='Geo FFT', alpha=0.4)
         self.line_freq_clean_geo, = ax3.plot(self.x_freq, np.zeros(self.half_n),
-                                              color='#00b894', linewidth=1.6, label='Geo Filtered')
-        self.line_freq_clean_mic, = ax3.plot(self.x_freq, np.zeros(self.half_n),
-                                              color='#d63031', linewidth=1.6, label='Mic Filtered')
+                                               color='#00b894', linewidth=1.6, label='Geo Filtered')
         self.line_freq_avg,   = ax3.plot(self.x_freq, np.zeros(self.half_n),
-                                          color='#e67e22', linestyle=':', linewidth=1.8, label='Geo Long-term Avg')
+                                           color='#e67e22', linestyle=':', linewidth=1.8, label='Geo Long-term Avg')
         ax3.axvspan(config.NOISE_MIN_FREQ, config.NOISE_MAX_FREQ, color='#dfe6e9', alpha=0.06)
         self.noise_band_patches = []
         ax3.set_title('[Stage 3] Real-time Spectrum — Noise Attenuation Bands',
@@ -520,7 +468,6 @@ class WildlifeUI:
             props=dict(alpha=0.5, facecolor='#fab1a0'),
             interactive=True, drag_from_anywhere=True)
         fig.canvas.mpl_connect('key_press_event', self._on_key)
-
         self.root.update()
 
     def _onselect(self, xmin, xmax):
@@ -535,96 +482,71 @@ class WildlifeUI:
             if self.on_manual_band_change:
                 self.on_manual_band_change(self.manual_bands)
 
-    def update(self, filtered_signal_geo, filtered_signal_mic,
-               x_arr_total_geo, x_arr_total_mic,
-               M_t_geo, M_t_mic,
-               clean_fft_mag_geo, clean_fft_mag_mic,
-               M_avg_geo, M_avg_mic,
-               detected_noise_bands_geo, detected_noise_bands_mic,
-               is_recording_geo, is_recording_mic,
-               step_completed_geo, step_completed_mic,
-               duration_geo, duration_mic,
-               avg_duration_geo, avg_duration_mic,
-               step_count_geo, step_count_mic,
-               transient_detected_geo, transient_detected_mic,
-               N_t_geo, K_t_geo, net_events_geo, acf_r_geo, cadence_geo,
-               N_t_mic, K_t_mic, net_events_mic, acf_r_mic, cadence_mic):
+    def update(self, filtered_signal_geo,
+               x_arr_total_geo,
+               M_t_geo,
+               clean_fft_mag_geo,
+               M_avg_geo,
+               detected_noise_bands_geo,
+               is_recording_geo,
+               step_completed_geo,
+               duration_geo,
+               avg_duration_geo,
+               step_count_geo,
+               transient_detected_geo,
+               N_t_geo, K_t_geo, net_events_geo, acf_r_geo, cadence_geo):
 
         self.line_time_clean_geo.set_ydata(filtered_signal_geo)
-        self.line_time_clean_mic.set_ydata(filtered_signal_mic)
         mx_geo = np.max(np.abs(filtered_signal_geo))
-        mx_mic = np.max(np.abs(filtered_signal_mic))
-        mx = max(mx_geo, mx_mic, 20.0)
+        mx = max(mx_geo, 20.0)
         self.ax1.set_ylim(-mx * 1.3, mx * 1.3)
 
         # Step Event Text
         geo_status = "Rec..." if is_recording_geo else (f"{duration_geo:.2f}s" if step_completed_geo else "Wait")
-        mic_status = "Rec..." if is_recording_mic else (f"{duration_mic:.2f}s" if step_completed_mic else "Wait")
         self.duration_text.set_text(
-            f'Step Event | Geo: {geo_status} (Avg: {avg_duration_geo:.2f}s, N={step_count_geo}) | '
-            f'Mic: {mic_status} (Avg: {avg_duration_mic:.2f}s, N={step_count_mic})'
+            f'Step Event | Geo: {geo_status} (Avg: {avg_duration_geo:.2f}s, N={step_count_geo})'
         )
 
-        if is_recording_geo or is_recording_mic:
+        if is_recording_geo:
             self.duration_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#55efc4', edgecolor='#00b894', alpha=0.9))
-        elif step_completed_geo or step_completed_mic:
+        elif step_completed_geo:
             self.duration_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#74b9ff', edgecolor='#0984e3', alpha=0.9))
         else:
             self.duration_text.set_bbox(dict(boxstyle='round,pad=0.4', facecolor='#ffeaa7', edgecolor='#fdcb6e', alpha=0.9))
 
-        self.bypass_label.set_text(
-            f'Transient Geo: {"ON" if transient_detected_geo else "OFF"} | '
-            f'Mic: {"ON" if transient_detected_mic else "OFF"}'
-        )
-        self.bypass_label.set_color('#27ae60' if (transient_detected_geo or transient_detected_mic) else '#b2bec3')
+        self.bypass_label.set_text(f'Transient Geo: {"ON" if transient_detected_geo else "OFF"}')
+        self.bypass_label.set_color('#27ae60' if transient_detected_geo else '#b2bec3')
 
         # Alarm triggering via logical-OR
         is_wildlife_geo = (net_events_geo >= config.ALERT_NET_EVENTS) and (acf_r_geo >= config.ACF_R_THRESHOLD)
-        is_wildlife_mic = (net_events_mic >= config.ALERT_NET_EVENTS) and (acf_r_mic >= config.ACF_R_THRESHOLD)
         is_warning_geo = (net_events_geo >= config.ALERT_NET_EVENTS)
-        is_warning_mic = (net_events_mic >= config.ALERT_NET_EVENTS)
 
-        if is_wildlife_geo and is_wildlife_mic:
-            self.alert_text.set_text(f'🚨 DUAL CONFIRMED WILDLIFE! (Geo: R={acf_r_geo:.2f} | Mic: R={acf_r_mic:.2f})')
-            self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
-        elif is_wildlife_geo:
+        if is_wildlife_geo:
             self.alert_text.set_text(f'🚨 GEOPHONE CONFIRMED WILDLIFE! (Geo: R={acf_r_geo:.2f})')
             self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
-        elif is_wildlife_mic:
-            self.alert_text.set_text(f'🚨 MICROPHONE CONFIRMED WILDLIFE! (Mic: R={acf_r_mic:.2f})')
-            self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#d63031', edgecolor='none', alpha=0.97))
-        elif is_warning_geo or is_warning_mic:
-            trigger_src = "Geo" if is_warning_geo else "Mic"
-            if is_warning_geo and is_warning_mic: trigger_src = "Dual"
-            self.alert_text.set_text(f'⚠️ WARNING: IMPACTS DETECTED ({trigger_src}) - Verifying Rhythm...')
+        elif is_warning_geo:
+            self.alert_text.set_text(f'⚠️ WARNING: IMPACTS DETECTED (Geo) - Verifying Rhythm...')
             self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#e67e22', edgecolor='none', alpha=0.97))
         else:
-            self.alert_text.set_text('📡 STATUS: MONITORING DUAL CHANNELS')
+            self.alert_text.set_text('📡 STATUS: MONITORING GEOPHONE')
             self.alert_text.set_bbox(dict(boxstyle='round,pad=0.5', facecolor='#00b894', edgecolor='none', alpha=0.92))
 
-        # SR potential plots with a tiny offset to avoid overlapping perfectly
-        self.line_time_sr_geo.set_ydata(np.sign(x_arr_total_geo) + 0.15)
-        self.line_time_sr_mic.set_ydata(np.sign(x_arr_total_mic) - 0.15)
+        # SR potential plots
+        self.line_time_sr_geo.set_ydata(np.sign(x_arr_total_geo))
 
-        self.sr_text.set_text(
-            f'Geo N-K: {net_events_geo} (N:{N_t_geo}, K:{K_t_geo}) | '
-            f'Mic N-K: {net_events_mic} (N:{N_t_mic}, K:{K_t_mic})'
-        )
+        self.sr_text.set_text(f'Geo N-K: {net_events_geo} (N:{N_t_geo}, K:{K_t_geo})')
         self.sr_text.set_bbox(dict(boxstyle='round,pad=0.4',
-                                   facecolor='#a3e4d7' if (net_events_geo > 0 or net_events_mic > 0) else '#e8f8f5',
+                                   facecolor='#a3e4d7' if net_events_geo > 0 else '#e8f8f5',
                                    edgecolor='#1abc9c', alpha=0.9))
 
         geo_acf_status = f"Geo R:{acf_r_geo:.2f}" + (f" ({cadence_geo:.2f}s)" if acf_r_geo >= config.ACF_R_THRESHOLD else "")
-        mic_acf_status = f"Mic R:{acf_r_mic:.2f}" + (f" ({cadence_mic:.2f}s)" if acf_r_mic >= config.ACF_R_THRESHOLD else "")
-        self.acf_text.set_text(f'ACF Rhythm | {geo_acf_status} | {mic_acf_status}')
+        self.acf_text.set_text(f'ACF Rhythm | {geo_acf_status}')
         self.acf_text.set_bbox(dict(boxstyle='round,pad=0.4',
-                                    facecolor='#d7bde2' if (acf_r_geo >= config.ACF_R_THRESHOLD or acf_r_mic >= config.ACF_R_THRESHOLD) else '#f5eef8',
+                                    facecolor='#d7bde2' if acf_r_geo >= config.ACF_R_THRESHOLD else '#f5eef8',
                                     edgecolor='#8e44ad', alpha=0.9))
 
         self.line_freq_raw_geo.set_ydata(M_t_geo)
-        self.line_freq_raw_mic.set_ydata(M_t_mic)
         self.line_freq_clean_geo.set_ydata(clean_fft_mag_geo)
-        self.line_freq_clean_mic.set_ydata(clean_fft_mag_mic)
         self.line_freq_avg.set_ydata(M_avg_geo)
 
         for p in self.noise_band_patches: p.remove()
@@ -633,12 +555,9 @@ class WildlifeUI:
         for (blo, bhi, bpeak) in detected_noise_bands_geo:
             self.noise_band_patches.append(self.ax3.axvspan(blo, bhi, color='#00cec9', alpha=0.2))
             parts.append(f'Geo:{bpeak:.1f}Hz')
-        for (blo, bhi, bpeak) in detected_noise_bands_mic:
-            self.noise_band_patches.append(self.ax3.axvspan(blo, bhi, color='#ff7675', alpha=0.2))
-            parts.append(f'Mic:{bpeak:.1f}Hz')
         self.band_info_text.set_text('Tracked Peak: ' + (', '.join(parts) if parts else 'None'))
 
-        mx_mag = max(np.max(M_t_geo), np.max(M_t_mic), np.max(M_avg_geo), 10.0)
+        mx_mag = max(np.max(M_t_geo), np.max(M_avg_geo), 10.0)
         self.ax3.set_ylim(0, mx_mag * 1.3)
 
         self.live_canvas.draw()
