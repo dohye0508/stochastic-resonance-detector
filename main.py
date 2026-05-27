@@ -153,138 +153,194 @@ def record_sensor_data(ser, label=None):
     return filename
 
 
-def load_animal_data_from_file():
-    """Geophone / MEMS microphone 폴더에서 CSV 파일을 선택하여 로드."""
-    print("\n" + "="*50)
-    print("📂 불러올 데이터 폴더를 선택하세요:")
-    print("  1. Geophone (지오폰)")
-    print("  2. MEMS microphone (마이크)")
-    print("  0. 취소")
-    print("="*50)
-    folder_sel = input("👉 선택: ").strip()
+def _pick_file_dialog(title, initialdir=None, filetypes=None, parent=None):
+    """tkinter 파일 탐색기 창을 열어 파일 경로를 반환합니다. 취소 시 None 반환."""
+    import tkinter as _tk
+    from tkinter import filedialog as _fd
+    
+    # parent(기존 ui.root)가 제공되면 별도의 임시 root를 만들지 않고 안전하게 파일 탐색기만 실행
+    if parent:
+        if filetypes is None:
+            filetypes = [('모든 파일', '*.*')]
+        if initialdir and not os.path.isabs(initialdir):
+            initialdir = os.path.abspath(initialdir)
+        path = _fd.askopenfilename(title=title, initialdir=initialdir, filetypes=filetypes, parent=parent)
+        return path if path else None
 
-    if folder_sel == '1':
-        folder = 'Geophone'
-    elif folder_sel == '2':
-        folder = 'MEMS microphone'
-    elif folder_sel == '0' or not folder_sel:
-        return None
-    else:
-        print("잘못된 선택입니다.")
-        return None
+    try:
+        root = _tk.Tk()
+        root.withdraw()         # 메인 윈도우 숨김
+        root.attributes('-topmost', True)   # 파일창이 항상 앞으로
+    except Exception:
+        root = None
+    if filetypes is None:
+        filetypes = [('모든 파일', '*.*')]
+    if initialdir and not os.path.isabs(initialdir):
+        initialdir = os.path.abspath(initialdir)
+    path = _fd.askopenfilename(title=title, initialdir=initialdir, filetypes=filetypes)
+    if root:
+        try: root.destroy()
+        except Exception: pass
+    return path if path else None
 
-    csv_files = sorted(glob.glob(os.path.join(folder, '*.csv')))
 
-    if not csv_files:
-        print(f"\n❌ {folder} 폴더에 CSV 파일이 없습니다.")
-        print("먼저 '신호 녹화' 메뉴로 동물 발걸음을 녹화해 주세요.")
-        return None
+def load_animal_data_from_file(parent=None):
+    """파일 탐색기로 지오폰 CSV를 선택하면, 동일 타임스탬프의 마이크 CSV를 자동 매칭하여 듀얼 로드합니다."""
+    folder_geo = os.path.abspath('Geophone')
+    folder_mic = os.path.abspath('MEMS microphone')
+    os.makedirs(folder_geo, exist_ok=True)
+    os.makedirs(folder_mic, exist_ok=True)
 
-    print("\n" + "="*50)
-    print(f"📂 [{folder}] 폴더의 파일을 선택하세요:")
-    for i, path in enumerate(csv_files, 1):
-        size_kb = os.path.getsize(path) // 1024
-        print(f"  {i:2d}. {os.path.basename(path)}  ({size_kb} KB)")
-    print("   0. 취소")
-    sel = input("👉 번호 선택: ").strip()
+    print("\n📂 [지오폰 발걸음 CSV] 파일 선택 창을 열고 있습니다...")
+    chosen_geo = _pick_file_dialog(
+        title='[지오폰] 발걸음 CSV 파일을 선택하세요',
+        initialdir=folder_geo,
+        filetypes=[('CSV 파일', '*.csv'), ('모든 파일', '*.*')],
+        parent=parent
+    )
+    if not chosen_geo:
+        print("⚠️ 취소되었습니다.")
+        return None, None
 
-    if sel == '0' or not sel.isdigit():
-        return None
-    idx = int(sel) - 1
-    if idx < 0 or idx >= len(csv_files):
-        print("잘못된 번호입니다.")
-        return None
+    print(f" ✅ 지오폰 파일 선택: {os.path.basename(chosen_geo)}")
 
-    chosen = csv_files[idx]
+    # 지오폰 파일에서 타임스탬프 추출하여 마이크 파일 자동 매칭
+    base_name = os.path.basename(chosen_geo)
+    parts = base_name.replace('.csv', '').split('_')
+    timestamp = parts[-1] if len(parts) >= 2 else None
+
+    chosen_mic = None
+    if timestamp:
+        mic_candidates = glob.glob(os.path.join(folder_mic, f"*{timestamp}.csv"))
+        if mic_candidates:
+            chosen_mic = mic_candidates[0]
+            print(f" ✅ 마이크 파일 자동 매칭: {os.path.basename(chosen_mic)}")
+
+    if not chosen_mic:
+        print("\n📂 [MEMS 마이크] 자동 매칭 실패 — 파일 선택 창을 열고 있습니다...")
+        chosen_mic = _pick_file_dialog(
+            title='[MEMS 마이크] 발걸음 CSV 파일을 선택하세요',
+            initialdir=folder_mic,
+            filetypes=[('CSV 파일', '*.csv'), ('모든 파일', '*.*')],
+            parent=parent
+        )
+        if not chosen_mic:
+            print("⚠️ 마이크 파일 선택이 취소되었습니다.")
+            return None, None
+        print(f" ✅ 마이크 파일 선택: {os.path.basename(chosen_mic)}")
+
+    # 지오폰 로드
     raw = []
-    with open(chosen, newline='') as f:
+    with open(chosen_geo, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            try:
-                raw.append(int(row['raw_value']))
-            except (KeyError, ValueError):
-                pass
+            try: raw.append(int(row['raw_value']))
+            except: pass
 
-    if len(raw) < 100:
-        print("❌ 파일에 데이터가 너무 적습니다.")
-        return None
-
-    centered = np.array(raw) - config.CURRENT_ZERO
-    print(f"✅ 파일 로드 완료! {len(centered)} 샘플 → {chosen}")
-    return centered
-
-
-def load_env_noise_from_file():
-    """surround noise 폴더에서 배경 소음 CSV 파일을 선택하여 로드."""
-    folder = 'surround noise'
-    if not os.path.exists(folder):
-        os.makedirs(folder, exist_ok=True)
-    csv_files = sorted(glob.glob(os.path.join(folder, '*.csv')))
-
-    print("\n" + "="*50)
-    print(f"📂 [환경 소음 선택] 최적화에 사용할 배경 소음 데이터를 선택하세요:")
-    
-    if not csv_files:
-        print(f"  ❌ {folder} 폴더에 저장된 CSV 파일이 없습니다.")
-        print("  0. 기본값 강제 사용 (루트 폴더의 env_noise_baseline.npy)")
-    else:
-        for i, path in enumerate(csv_files, 1):
-            size_kb = os.path.getsize(path) // 1024
-            print(f"  {i:2d}. {os.path.basename(path)}  ({size_kb} KB)")
-        print("   0. 최근 측정된 기본값 사용 (env_noise_baseline.npy)")
-    
-    sel = input("👉 번호 선택 (기본값=0): ").strip()
-
-    if sel == '0' or not sel:
-        if os.path.exists('env_noise_baseline.npy'):
-            print("✅ 최근 측정된 기본 배경 소음(env_noise_baseline.npy)을 로드합니다.")
-            return np.load('env_noise_baseline.npy')
-        else:
-            print("❌ 기본 배경 소음 파일이 없습니다. 1번 메뉴를 먼저 실행하세요.")
-            return None
-
-    if not sel.isdigit():
-        print("잘못된 입력입니다.")
-        return None
-        
-    idx = int(sel) - 1
-    if idx < 0 or idx >= len(csv_files):
-        print("잘못된 번호입니다.")
-        return None
-
-    chosen = csv_files[idx]
-    raw = []
-    import csv as _csv
-    with open(chosen, newline='') as f:
-        reader = _csv.DictReader(f)
+    # 마이크 로드
+    raw_mic = []
+    with open(chosen_mic, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
         for row in reader:
-            try:
-                raw.append(int(row['raw_value']))
-            except (KeyError, ValueError):
-                pass
+            try: raw_mic.append(int(row['raw_value']))
+            except: pass
 
-    if len(raw) < 100:
-        print("❌ 파일에 데이터가 너무 적습니다.")
-        return None
+    if len(raw) < 100 or len(raw_mic) < 100:
+        print("❌ 파일에 데이터가 너무 적습니다 (최소 100샘플 필요).")
+        return None, None
 
-    # 환경 소음의 자체 DC Bias(직류 성분)를 제거하여 순수 진동(AC)만 추출
-    centered = np.array(raw) - np.mean(raw)
-    print(f"✅ 선택한 배경 소음 로드 완료! {len(centered)} 샘플 → {chosen}")
-    return centered
+    centered_geo = np.array(raw) - config.CURRENT_ZERO_GEO
+    centered_mic = np.array(raw_mic) - config.CURRENT_ZERO_MIC
+    print(f"✅ 파일 듀얼 로드 성공!")
+    print(f" 👉 지오폰: {os.path.basename(chosen_geo)} ({len(centered_geo)} 샘플)")
+    print(f" 👉 마이크: {os.path.basename(chosen_mic)} ({len(centered_mic)} 샘플)")
+    return centered_geo, centered_mic
+
+
+def load_env_noise_from_file(parent=None):
+    """파일 탐색기로 배경 소음 파일(.npy 또는 .csv)을 선택하여 듀얼 채널 기준선을 로드합니다."""
+    # 초기 탐색 경로: 'surround noise' 폴더 우선, 없으면 현재 폴더
+    init_dir = os.path.abspath('surround noise') if os.path.exists('surround noise') else os.path.abspath('.')
+
+    print("\n📂 [지오폰 배경 소음] 파일 선택 창을 열고 있습니다 (npy 또는 csv)...")
+    chosen_geo = _pick_file_dialog(
+        title='[지오폰] 배경 소음 파일을 선택하세요 (.npy 또는 .csv)',
+        initialdir=init_dir,
+        filetypes=[
+            ('NumPy 배열 (npy)', '*.npy'),
+            ('CSV 데이터', '*.csv'),
+            ('모든 파일', '*.*')
+        ],
+        parent=parent
+    )
+    if not chosen_geo:
+        print("⚠️ 지오폰 배경 소음 파일 선택이 취소되었습니다.")
+        return None, None
+    print(f" ✅ 지오폰 소음 파일 선택: {os.path.basename(chosen_geo)}")
+
+    print("\n📂 [MEMS 마이크 배경 소음] 파일 선택 창을 열고 있습니다 (npy 또는 csv)...")
+    chosen_mic = _pick_file_dialog(
+        title='[MEMS 마이크] 배경 소음 파일을 선택하세요 (.npy 또는 .csv)',
+        initialdir=os.path.dirname(chosen_geo),
+        filetypes=[
+            ('NumPy 배열 (npy)', '*.npy'),
+            ('CSV 데이터', '*.csv'),
+            ('모든 파일', '*.*')
+        ],
+        parent=parent
+    )
+    if not chosen_mic:
+        print("⚠️ 마이크 배경 소음 파일 선택이 취소되었습니다.")
+        return None, None
+    print(f" ✅ 마이크 소음 파일 선택: {os.path.basename(chosen_mic)}")
+
+    def _load_noise_file(path):
+        """확장자에 따라 npy 또는 csv를 로드하고 DC 성분을 제거한 배열을 반환."""
+        ext = os.path.splitext(path)[1].lower()
+        if ext == '.npy':
+            arr = np.load(path)
+        elif ext == '.csv':
+            import csv as _csv
+            raw = []
+            with open(path, newline='', encoding='utf-8-sig') as f:
+                reader = _csv.DictReader(f)
+                col_candidates = ['raw_value', 'geophone_raw', 'microphone_raw']
+                for row in reader:
+                    for col in col_candidates:
+                        if col in row:
+                            try: raw.append(int(row[col])); break
+                            except: pass
+            if len(raw) < 100:
+                return None
+            arr = np.array(raw, dtype=float)
+        else:
+            print(f"❌ 지원하지 않는 파일 형식입니다: {ext}")
+            return None
+        return arr - np.mean(arr)   # DC Bias 제거
+
+    env_geo = _load_noise_file(chosen_geo)
+    env_mic = _load_noise_file(chosen_mic)
+
+    if env_geo is None or env_mic is None:
+        print("❌ 파일 로드에 실패했습니다. 데이터가 너무 적거나 형식이 맞지 않습니다.")
+        return None, None
+
+    print(f"✅ 배경 소음 듀얼 로드 완료! 지오폰 {len(env_geo)} 샘플, 마이크 {len(env_mic)} 샘플")
+    return env_geo, env_mic
 
 def run_env_noise_calibration(ser):
     print("\n" + "="*60)
     print("🐾 야생동물 감지 시스템 - [1단계] 배경 소음 수집 및 파일 저장 🐾")
     print("="*60)
     
-    print("\n[1단계/1] 배경 소음(배경 진동) 수집 시작 (15분)")
+    print("\n[1단계/1] 배경 소음(배경 진동) 수집 시작 (10분)")
     print("💡 안내: 센서 주변을 완전히 조용하게 유지해 주십시오.")
     time.sleep(1.0)
     
     env_noise_raw = []
     start_time = time.time()
     last_print = 0.0
-    while time.time() - start_time < 900.0:
+    while time.time() - start_time < 600.0:
         if ser.in_waiting > 0:
             ln = ser.readline().decode('utf-8', errors='ignore').strip()
             if ln:
@@ -297,7 +353,7 @@ def run_env_noise_calibration(ser):
         # 5초마다 진행 상황 표시
         elapsed = time.time() - start_time
         if elapsed - last_print >= 5.0:
-            percent = (elapsed / 900.0) * 100
+            percent = (elapsed / 600.0) * 100
             print(f"⏳ 소음 수집 중... {percent:.1f}% 완료 ({len(env_noise_raw)} 샘플)")
             last_print = elapsed
         time.sleep(0.001)
@@ -468,30 +524,33 @@ import threading
 
 def _run_env_noise_ui(ser, ui):
     """배경 소음 수집을 메인 스레드에서 실행하며 UI를 업데이트."""
-    print("\n⚙️ 측정 대상 센서 선택: 1=Geophone (A0), 2=MEMS Microphone (A1)")
-    ch = input("👉 ").strip()
-    channel = 1 if ch == '2' else 0
-
-    # 영점 자동 조절
-    config.CURRENT_ZERO = auto_calibrate_zero(ser, channel)
+    # 영점 자동 조절 (듀얼 채널)
+    zero_geo, zero_mic = auto_calibrate_dual(ser)
+    config.CURRENT_ZERO_GEO = zero_geo
+    config.CURRENT_ZERO_MIC = zero_mic
 
     ui.show_recording_graph(
         '📡 [1단계] 배경 소음 측정',
-        '센서 주변을 조용히 유지해 주세요 — 15분 동안 수집합니다')
+        '센서 주변을 조용히 유지해 주세요 — 10분 동안 수집합니다',
+        dual=True)
     samples = []
     start = _time_module.time()
     last_print = 0.0
-    while _time_module.time() - start < 900.0:
+    while _time_module.time() - start < 600.0:  # 10분(600초) 동안 수집
         if not ui.is_alive(): return
         if ser.in_waiting > 0:
             ln = ser.readline().decode('utf-8', errors='ignore').strip()
-            if ln:
-                val = parse_serial_line(ln, channel)
-                if val is not None:
-                    samples.append(val)
+            if ln and ',' in ln:
+                parts = ln.split(',')
+                if len(parts) >= 2:
+                    try:
+                        val0 = int(parts[0])
+                        val1 = int(parts[1])
+                        samples.append((val0, val1))
+                    except ValueError: pass
         elapsed = _time_module.time() - start
         if elapsed - last_print >= 0.05:
-            pct = elapsed / 900.0 * 100
+            pct = elapsed / 600.0 * 100
             ui.update_recording_graph(
                 samples,
                 f'⏳ 수집 중... {pct:.1f}%  ({len(samples)} 샘플)',
@@ -504,96 +563,121 @@ def _run_env_noise_ui(ser, ui):
         _time_module.sleep(2.0)
         return
     
-    # 데이터 처리 및 저장
-    env = np.array(samples) - config.CURRENT_ZERO
+    # 데이터 처리 및 저장 (듀얼 채널)
+    env_geo = np.array([s[0] for s in samples]) - config.CURRENT_ZERO_GEO
+    env_mic = np.array([s[1] for s in samples]) - config.CURRENT_ZERO_MIC
     
-    # 1. 루트 폴더에 기준선 저장 (다른 분석 기능 연동용)
-    np.save('env_noise_baseline.npy', env)
+    # 1. 루트 폴더에 기준선 저장
+    np.save('env_noise_baseline_geo.npy', env_geo)
+    np.save('env_noise_baseline_mic.npy', env_mic)
+    np.save('env_noise_baseline.npy', env_geo)  # 싱글 채널용 하위 호환
     
-    # 2. 'surround noise' 폴더에 CSV 및 NPY 사본 백업 저장
+    # 2. 'surround noise' 폴더에 CSV 백업 저장
     folder_name = 'surround noise'
     os.makedirs(folder_name, exist_ok=True)
     ts = int(_time_module.time())
     
-    # CSV 저장
+    # CSV 저장 (듀얼)
     import csv as _csv
-    csv_fname = os.path.join(folder_name, f'noise_raw_{ts}.csv')
+    csv_fname = os.path.join(folder_name, f'noise_dual_{ts}.csv')
     with open(csv_fname, 'w', newline='') as f:
         w = _csv.writer(f)
-        w.writerow(['sample_index', 'raw_value'])
+        w.writerow(['sample_index', 'geophone_raw', 'microphone_raw'])
         for i, v in enumerate(samples):
-            w.writerow([i, v])
+            w.writerow([i, v[0], v[1]])
             
-    # NPY 저장
-    npy_fname = os.path.join(folder_name, 'env_noise_baseline.npy')
-    np.save(npy_fname, env)
+    # NPY 저장 백업
+    np.save(os.path.join(folder_name, 'env_noise_baseline_geo.npy'), env_geo)
+    np.save(os.path.join(folder_name, 'env_noise_baseline_mic.npy'), env_mic)
     
     ui.update_recording_graph(samples, f'✅ 완료! {len(samples)} 샘플 → {csv_fname} 저장됨', '#55efc4')
     ui.root.update()
     _time_module.sleep(2.0)
 
 
-def _run_footstep_ui(ser, ui, env_noise):
-    """발걸음 30초 수집 + 최적화를 메인 스레드에서 실행."""
-    print("\n⚙️ 측정 대상 센서 선택: 1=Geophone (A0), 2=MEMS Microphone (A1)")
-    ch = input("👉 ").strip()
-    channel = 1 if ch == '2' else 0
-
+def _run_footstep_ui(ser, ui, env_noise_geo, env_noise_mic):
+    """발걸음 30초 수집 + 최적화를 메인 스레드에서 실행 (듀얼 채널)."""
     # 영점 자동 조절
-    config.CURRENT_ZERO = auto_calibrate_zero(ser, channel)
+    zero_geo, zero_mic = auto_calibrate_dual(ser)
+    config.CURRENT_ZERO_GEO = zero_geo
+    config.CURRENT_ZERO_MIC = zero_mic
 
-    ui.show_optimization_graph(env_noise)
+    ui.show_recording_graph(
+        '👣 [2단계] 발걸음 실측 수집',
+        '센서 주변을 힘껏 밟아주세요! (30초)',
+        dual=True)
     samples = []
     start = _time_module.time()
     last_print = 0.0
-    ui.update_optimization_graph('👣 발걸음을 밟아주세요 (30초)', color='#fdcb6e')
     while _time_module.time() - start < 30.0:
-        if not ui.is_alive(): return None, None, None
+        if not ui.is_alive(): return None, None, None, None, None, None
         if ser.in_waiting > 0:
             ln = ser.readline().decode('utf-8', errors='ignore').strip()
-            if ln:
-                val = parse_serial_line(ln, channel)
-                if val is not None:
-                    samples.append(val)
+            if ln and ',' in ln:
+                parts = ln.split(',')
+                if len(parts) >= 2:
+                    try:
+                        val0 = int(parts[0])
+                        val1 = int(parts[1])
+                        samples.append((val0, val1))
+                    except ValueError: pass
         elapsed = _time_module.time() - start
         if elapsed - last_print >= 0.05:
             pct = elapsed / 30.0 * 100
-            animal_arr = np.array(samples) - config.CURRENT_ZERO if samples else np.zeros(1)
-            ui.update_optimization_graph(
+            ui.update_recording_graph(
+                samples,
                 f'👣 발걸음 수집 중... {pct:.1f}%  ({len(samples)} 샘플)',
-                animal_signal=animal_arr)
+                color='#fdcb6e')
             last_print = elapsed
         ui.root.update()
         _time_module.sleep(0.001)
     if len(samples) < 100:
-        ui.update_optimization_graph('❌ 발걸음 데이터 부족', color='#d63031')
+        ui.update_recording_graph(samples, '❌ 발걸음 데이터 부족', color='#d63031')
         ui.root.update()
         _time_module.sleep(2.0)
-        return None, None, None
-    animal = np.array(samples) - config.CURRENT_ZERO
-    ui.update_optimization_graph('⏳ SDFT + SR 최적화 연산 중...', animal_signal=animal, color='#a29bfe')
+        return None, None, None, None, None, None
+        
+    animal_geo = np.array([s[0] for s in samples]) - config.CURRENT_ZERO_GEO
+    animal_mic = np.array([s[1] for s in samples]) - config.CURRENT_ZERO_MIC
+    
+    # 1. 지오폰 최적화
+    ui.show_optimization_graph(env_noise_geo, animal_signal=animal_geo)
+    ui.update_optimization_graph('⏳ 지오폰 파라미터 최적화 연산 중...', raw_signal=animal_geo, color='#a29bfe')
     ui.root.update()
-    res_a, res_b, res_sigma = _optimize_from_data(animal, env_noise)
-    ui.update_optimization_graph(
-        f'✅ 최적화 완료! a={res_a:.1f}, σ={res_sigma:.1f}',
-        filtered_chunk=None, result=(res_a, res_b, res_sigma), color='#55efc4')
+    res_a_geo, _, res_sigma_geo = _optimize_from_data(animal_geo, env_noise_geo, ui=ui)
     ui.root.update()
-    _time_module.sleep(2.0)
-    return res_a, res_b, res_sigma
+    _time_module.sleep(1.5)
+    
+    # 2. 마이크 최적화
+    ui.show_optimization_graph(env_noise_mic, animal_signal=animal_mic)
+    ui.update_optimization_graph('⏳ 마이크 파라미터 최적화 연산 중...', raw_signal=animal_mic, color='#a29bfe')
+    ui.root.update()
+    res_a_mic, _, res_sigma_mic = _optimize_from_data(animal_mic, env_noise_mic, ui=ui)
+    ui.root.update()
+    _time_module.sleep(1.5)
+    
+    return res_a_geo, res_a_geo, res_sigma_geo, res_a_mic, res_a_mic, res_sigma_mic
 
 
-def _run_file_optimize_ui(animal, env_noise, ui):
-    """파일 불러오기 최적화를 메인 스레드에서 실행."""
-    ui.show_optimization_graph(env_noise, animal_signal=animal)
-    ui.update_optimization_graph('⏳ SDFT + SR 최적화 연산 중...', animal_signal=animal, color='#a29bfe')
+def _run_file_optimize_ui(animal_geo, animal_mic, env_noise_geo, env_noise_mic, ui):
+    """파일 불러오기 최적화를 메인 스레드에서 실행 (듀얼 채널)."""
+    # 1. 지오폰 최적화
+    ui.show_optimization_graph(env_noise_geo, animal_signal=animal_geo)
+    ui.update_optimization_graph('⏳ 지오폰 파라미터 최적화 연산 중...', raw_signal=animal_geo, color='#a29bfe')
     ui.root.update()
-    res_a, res_b, res_sigma = _optimize_from_data(animal, env_noise)
-    ui.update_optimization_graph(
-        f'✅ 최적화 완료! a={res_a:.1f}, σ={res_sigma:.1f}',
-        result=(res_a, res_b, res_sigma), color='#55efc4')
+    res_a_geo, _, res_sigma_geo = _optimize_from_data(animal_geo, env_noise_geo, ui=ui)
     ui.root.update()
-    _time_module.sleep(2.0)
-    return res_a, res_b, res_sigma
+    _time_module.sleep(1.5)
+    
+    # 2. 마이크 최적화
+    ui.show_optimization_graph(env_noise_mic, animal_signal=animal_mic)
+    ui.update_optimization_graph('⏳ 마이크 파라미터 최적화 연산 중...', raw_signal=animal_mic, color='#a29bfe')
+    ui.root.update()
+    res_a_mic, _, res_sigma_mic = _optimize_from_data(animal_mic, env_noise_mic, ui=ui)
+    ui.root.update()
+    _time_module.sleep(1.5)
+    
+    return res_a_geo, res_a_geo, res_sigma_geo, res_a_mic, res_a_mic, res_sigma_mic
 
 
 def _run_record_ui(ser, ui):
@@ -701,10 +785,15 @@ def main():
         print(f'포트 연결 실패: {e}')
         return
 
-    # 기본 파라미터
-    opt_a     = config.POTENTIAL_A
-    opt_b     = config.POTENTIAL_B
-    opt_sigma = config.SIGMA_NOISE
+    # 기본 파라미터 (지오폰)
+    opt_a_geo     = config.POTENTIAL_A
+    opt_b_geo     = config.POTENTIAL_B
+    opt_sigma_geo = config.SIGMA_NOISE
+
+    # 기본 파라미터 (마이크로폰)
+    opt_a_mic     = config.POTENTIAL_A
+    opt_b_mic     = config.POTENTIAL_B
+    opt_sigma_mic = config.SIGMA_NOISE
 
     # Tkinter UI 생성 (메인 스레드)
     ui = WildlifeUI()
@@ -722,34 +811,41 @@ def main():
             _run_env_noise_ui(ser, ui)
 
         elif choice == '2':
-            env_noise = load_env_noise_from_file()
-            if env_noise is None:
-                _time_module.sleep(1.0)
+            # 파일 선택창으로 듀얼 배경 소음 로드
+            env_noise_geo, env_noise_mic = load_env_noise_from_file(parent=ui.root)
+
+            if env_noise_geo is None or env_noise_mic is None:
+                print("⚠️ 배경 소음 파일 선택이 취소되었거나 로드에 실패했습니다.")
                 continue
-            res = _run_footstep_ui(ser, ui, env_noise)
+                
+            res = _run_footstep_ui(ser, ui, env_noise_geo, env_noise_mic)
             if res[0] is not None:
-                opt_a, opt_b, opt_sigma = res
+                opt_a_geo, opt_b_geo, opt_sigma_geo, opt_a_mic, opt_b_mic, opt_sigma_mic = res
 
         elif choice == '3':
-            animal = load_animal_data_from_file()
-            if animal is None:
+            animal_geo, animal_mic = load_animal_data_from_file(parent=ui.root)
+            if animal_geo is None or animal_mic is None:
                 continue
-            env_noise = load_env_noise_from_file()
-            if env_noise is None:
-                _time_module.sleep(1.0)
+
+            # 파일 선택창으로 듀얼 배경 소음 로드
+            env_noise_geo, env_noise_mic = load_env_noise_from_file(parent=ui.root)
+
+            if env_noise_geo is None or env_noise_mic is None:
+                print("⚠️ 배경 소음 파일 선택이 취소되었거나 로드에 실패했습니다.")
                 continue
-            res = _run_file_optimize_ui(animal, env_noise, ui)
+                
+            res = _run_file_optimize_ui(animal_geo, animal_mic, env_noise_geo, env_noise_mic, ui)
             if res[0] is not None:
-                opt_a, opt_b, opt_sigma = res
+                opt_a_geo, opt_b_geo, opt_sigma_geo, opt_a_mic, opt_b_mic, opt_sigma_mic = res
 
         elif choice == '4':
-            # 듀얼 채널 동시 녹화 자동 진행 (사용자 폴더 선택 불필요)
+            # 듀얼 채널 동시 녹화 자동 진행
             print('\n📡 듀얼 채널(지오폰 & MEMS 마이크) 동시 녹화를 진행합니다.')
             label = input('👉 레이블 입력 (기본=raw): ').strip() or 'raw'
             dur_s = input('👉 녹화 시간 입력 (초, 기본=30): ').strip()
             try:    dur = float(dur_s) if dur_s else 30.0
             except: dur = 30.0
-            ui._pending_record_sel   = '4'  # 자동으로 듀얼 모드('4') 지정
+            ui._pending_record_sel   = '4'
             ui._pending_record_label = label
             ui._pending_record_dur   = dur
             _run_record_ui(ser, ui)
@@ -761,67 +857,113 @@ def main():
         ser.close()
         return
 
-    # ── 실시간 감지 루프 ───────────────────────────
-    print("\n⚙️ 감지 센서 선택: 1=Geophone (A0), 2=MEMS Microphone (A1)")
-    ch = input("👉 ").strip()
-    channel = 1 if ch == '2' else 0
+    # ── 실시간 감지 루프 (듀얼 채널 항상 작동) ───────────────────────────
+    # 듀얼 채널 영점 동시 보정
+    zero_geo, zero_mic = auto_calibrate_dual(ser)
+    config.CURRENT_ZERO_GEO = zero_geo
+    config.CURRENT_ZERO_MIC = zero_mic
 
-    # 영점 자동 조절
-    config.CURRENT_ZERO = auto_calibrate_zero(ser, channel)
+    # 지오폰 파이프라인 컴포넌트
+    data_buffer_geo   = [0.0] * config.BUFFER_SIZE
+    step_analyzer_geo = StepDurationAnalyzer()
+    sdft_filter_geo   = SDFTAdaptiveFilter()
+    bistable_engine_geo = BistableDoubleWellEngine()
+    bistable_engine_geo.a = opt_a_geo
+    bistable_engine_geo.b = opt_b_geo
+    acf_analyzer_geo  = ACFPeriodicityAnalyzer()
 
-    data_buffer   = [0.0] * config.BUFFER_SIZE
-    step_analyzer = StepDurationAnalyzer()
-    sdft_filter   = SDFTAdaptiveFilter()
-    bistable_engine = BistableDoubleWellEngine()
-    bistable_engine.a = opt_a
-    bistable_engine.b = opt_b
-    acf_analyzer  = ACFPeriodicityAnalyzer()
+    # 마이크 파이프라인 컴포넌트
+    data_buffer_mic   = [0.0] * config.BUFFER_SIZE
+    step_analyzer_mic = StepDurationAnalyzer()
+    sdft_filter_mic   = SDFTAdaptiveFilter()
+    bistable_engine_mic = BistableDoubleWellEngine()
+    bistable_engine_mic.a = opt_a_mic
+    bistable_engine_mic.b = opt_b_mic
+    acf_analyzer_mic  = ACFPeriodicityAnalyzer()
 
     def on_band_change(bands):
-        sdft_filter.manual_bands = bands
+        sdft_filter_geo.manual_bands = bands
+        sdft_filter_mic.manual_bands = bands
 
     ui.setup_live_detection(on_manual_band_change=on_band_change)
     last_render_time = time.time()
-    print('시스템 엔진 가동 중...')
+    print('시스템 엔진 가동 중 (지오폰 A0 & 마이크 A1 동시 분석)...')
 
     try:
         while ui.is_alive():
             data_updated = False
             while ser.in_waiting > 0:
                 ln = ser.readline().decode('utf-8', errors='ignore').strip()
-                if ln:
-                    val = parse_serial_line(ln, channel)
-                    if val is not None:
-                        data_buffer.pop(0)
-                        data_buffer.append(val - config.CURRENT_ZERO)
-                        data_updated = True
+                if ln and ',' in ln:
+                    parts = ln.split(',')
+                    if len(parts) >= 2:
+                        try:
+                            val0 = int(parts[0])
+                            val1 = int(parts[1])
+                            data_buffer_geo.pop(0)
+                            data_buffer_geo.append(val0 - zero_geo)
+                            data_buffer_mic.pop(0)
+                            data_buffer_mic.append(val1 - zero_mic)
+                            data_updated = True
+                        except ValueError:
+                            pass
 
             current_time = time.time()
             if data_updated and (current_time - last_render_time >= config.RENDER_INTERVAL):
-                raw_signal = np.array(data_buffer)
-                signal = raw_signal - np.mean(raw_signal)
-                signal = signal * (1.0 - np.exp(-np.abs(signal) / 2.5))
+                # 1. 지오폰 분석 파이프라인
+                raw_signal_geo = np.array(data_buffer_geo)
+                signal_geo = raw_signal_geo - np.mean(raw_signal_geo)
+                signal_geo = signal_geo * (1.0 - np.exp(-np.abs(signal_geo) / 2.5))
+                
+                act_idx_geo, is_rec_geo, step_comp_geo, dur_geo, durations_geo = step_analyzer_geo.analyze(signal_geo, current_time)
+                avg_dur_geo = sum(durations_geo)/len(durations_geo) if durations_geo else 0.0
+                filtered_signal_geo, M_t_geo, clean_fft_mag_geo, transient_detected_geo = sdft_filter_geo.process(signal_geo)
+                
+                white_noise_geo = np.random.normal(0, opt_sigma_geo, config.BUFFER_SIZE)
+                x_arr_tot_geo, x_arr_noi_geo, N_t_geo, K_t_geo = bistable_engine_geo.process_buffer(filtered_signal_geo, white_noise_geo)
+                net_events_geo = max(0, N_t_geo - K_t_geo)
+                
+                telegraph_signal_geo = np.sign(x_arr_tot_geo)
+                acf_r_geo, cadence_geo = acf_analyzer_geo.compute(telegraph_signal_geo)
 
-                act_idx, is_rec, step_comp, dur, durations = step_analyzer.analyze(signal, current_time)
-                avg_dur = sum(durations)/len(durations) if durations else 0.0
+                # 2. 마이크 분석 파이프라인
+                raw_signal_mic = np.array(data_buffer_mic)
+                signal_mic = raw_signal_mic - np.mean(raw_signal_mic)
+                signal_mic = signal_mic * (1.0 - np.exp(-np.abs(signal_mic) / 2.5))
+                
+                act_idx_mic, is_rec_mic, step_comp_mic, dur_mic, durations_mic = step_analyzer_mic.analyze(signal_mic, current_time)
+                avg_dur_mic = sum(durations_mic)/len(durations_mic) if durations_mic else 0.0
+                filtered_signal_mic, M_t_mic, clean_fft_mag_mic, transient_detected_mic = sdft_filter_mic.process(signal_mic)
+                
+                white_noise_mic = np.random.normal(0, opt_sigma_mic, config.BUFFER_SIZE)
+                x_arr_tot_mic, x_arr_noi_mic, N_t_mic, K_t_mic = bistable_engine_mic.process_buffer(filtered_signal_mic, white_noise_mic)
+                net_events_mic = max(0, N_t_mic - K_t_mic)
+                
+                telegraph_signal_mic = np.sign(x_arr_tot_mic)
+                acf_r_mic, cadence_mic = acf_analyzer_mic.compute(telegraph_signal_mic)
 
-                filtered_signal, M_t, clean_fft_mag, transient_detected = sdft_filter.process(signal)
-
-                white_noise = np.random.normal(0, opt_sigma, config.BUFFER_SIZE)
-                x_arr_tot, x_arr_noi, N_t, K_t = bistable_engine.process_buffer(filtered_signal, white_noise)
-                net_events = max(0, N_t - K_t)
-
-                telegraph_signal = np.sign(x_arr_tot)
-                acf_r, cadence = acf_analyzer.compute(telegraph_signal)
-
+                # 3. GUI 업데이트 (듀얼 채널 데이터 전달)
                 ui.update(
-                    filtered_signal, x_arr_tot, M_t, clean_fft_mag,
-                    sdft_filter.M_avg, sdft_filter.detected_noise_bands,
-                    is_rec, step_comp, dur, avg_dur, len(durations), transient_detected,
-                    N_t, K_t, net_events, acf_r, cadence)
+                    filtered_signal_geo, filtered_signal_mic,
+                    x_arr_tot_geo, x_arr_tot_mic,
+                    M_t_geo, M_t_mic,
+                    clean_fft_mag_geo, clean_fft_mag_mic,
+                    sdft_filter_geo.M_avg, sdft_filter_mic.M_avg,
+                    sdft_filter_geo.detected_noise_bands, sdft_filter_mic.detected_noise_bands,
+                    is_rec_geo, is_rec_mic,
+                    step_comp_geo, step_comp_mic,
+                    dur_geo, dur_mic,
+                    avg_dur_geo, avg_dur_mic,
+                    len(durations_geo), len(durations_mic),
+                    transient_detected_geo, transient_detected_mic,
+                    N_t_geo, K_t_geo, net_events_geo, acf_r_geo, cadence_geo,
+                    N_t_mic, K_t_mic, net_events_mic, acf_r_mic, cadence_mic
+                )
 
                 last_render_time = current_time
 
+            # 아두이노 데이터가 들어오지 않더라도 GUI 이벤트가 처리되도록 함 (응답없음 방지)
+            ui.root.update()
             time.sleep(0.001)
 
     except KeyboardInterrupt:
