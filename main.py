@@ -67,6 +67,26 @@ SENSOR_FOLDERS = {
 }
 
 
+def _pick_file_dialog(title, initialdir, filetypes, parent=None):
+    """Tkinter 파일 선택 다이얼로그를 열고 선택된 경로를 반환합니다."""
+    import tkinter as tk
+    from tkinter import filedialog
+    root_tmp = None
+    try:
+        if parent is None:
+            root_tmp = tk.Tk()
+            root_tmp.withdraw()
+            chosen = filedialog.askopenfilename(
+                title=title, initialdir=initialdir, filetypes=filetypes, parent=root_tmp)
+        else:
+            chosen = filedialog.askopenfilename(
+                title=title, initialdir=initialdir, filetypes=filetypes, parent=parent)
+    finally:
+        if root_tmp is not None:
+            root_tmp.destroy()
+    return chosen if chosen else None
+
+
 def load_animal_data_from_file(parent=None):
     """파일 탐색기로 지오폰 CSV를 선택하고 로드합니다."""
     folder_geo = os.path.abspath('Geophone')
@@ -278,13 +298,14 @@ def _run_env_noise_ui(ser, ui):
 
     ui.show_recording_graph(
         '📡 [1단계] 배경 소음 측정',
-        '센서 주변을 조용히 유지해 주세요 — 10분 동안 수집합니다')
+        '센서 주변을 조용히 유지해 주세요 — 30분 동안 수집합니다')
     samples = []
     start = _time_module.time()
     last_print = 0.0
-    while _time_module.time() - start < 600.0:  # 10분(600초) 동안 수집
-        if not ui.is_alive(): return
-        if ser.in_waiting > 0:
+    while _time_module.time() - start < 1800.0:  # 30분(1800초) 동안 수집
+        if not ui.is_alive(): 
+            break  # 창을 닫아도 수집된 곳까지만이라도 무조건 저장하도록 변경
+        while ser.in_waiting > 0:
             ln = ser.readline().decode('utf-8', errors='ignore').strip()
             if ln:
                 val = parse_serial_line(ln, 0)
@@ -292,7 +313,7 @@ def _run_env_noise_ui(ser, ui):
                     samples.append(val)
         elapsed = _time_module.time() - start
         if elapsed - last_print >= 0.05:
-            pct = elapsed / 600.0 * 100
+            pct = elapsed / 1800.0 * 100
             ui.update_recording_graph(
                 samples,
                 f'⏳ 수집 중... {pct:.1f}%  ({len(samples)} 샘플)',
@@ -347,7 +368,7 @@ def _run_footstep_ui(ser, ui, env_noise_geo):
     last_print = 0.0
     while _time_module.time() - start < 30.0:
         if not ui.is_alive(): return None, None, None
-        if ser.in_waiting > 0:
+        while ser.in_waiting > 0:
             ln = ser.readline().decode('utf-8', errors='ignore').strip()
             if ln:
                 val = parse_serial_line(ln, 0)
@@ -368,6 +389,21 @@ def _run_footstep_ui(ser, ui, env_noise_geo):
         ui.root.update()
         _time_module.sleep(2.0)
         return None, None, None
+        
+    # 'Geophone' 폴더에 CSV 저장 (영어 이름)
+    folder_name = 'Geophone'
+    os.makedirs(folder_name, exist_ok=True)
+    ts = int(_time_module.time())
+    csv_fname = os.path.join(folder_name, f'footstep_geophone_{ts}.csv')
+    
+    import csv as _csv
+    with open(csv_fname, 'w', newline='') as f:
+        w = _csv.writer(f)
+        w.writerow(['sample_index', 'raw_value'])
+        for i, v in enumerate(samples):
+            w.writerow([i, v])
+            
+    print(f"✅ 발걸음 데이터 저장 완료: {csv_fname}")
         
     animal_geo = np.array(samples) - config.CURRENT_ZERO
     
@@ -418,7 +454,7 @@ def _run_record_ui(ser, ui):
     last_print = 0.0
     while _time_module.time() - start < dur:
         if not ui.is_alive(): return
-        if ser.in_waiting > 0:
+        while ser.in_waiting > 0:
             ln = ser.readline().decode('utf-8', errors='ignore').strip()
             if ln:
                 val = parse_serial_line(ln, 0)

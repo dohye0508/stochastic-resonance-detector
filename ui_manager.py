@@ -24,7 +24,7 @@ MUTED    = '#636e72'
 PLOT_BG  = '#090912'
 
 MENU_BUTTONS = [
-    ('1', '[환경 셋업]',     '배경 진동 측정 및 파일 저장 (10분)', '#0984e3'),
+    ('1', '[환경 셋업]',     '배경 진동 측정 및 파일 저장 (30분)', '#0984e3'),
     ('2', '[파라미터 튜닝]', '발걸음 실시간 측정 → SR 최적화',    '#00b894'),
     ('3', '[파라미터 튜닝]', '저장된 파일 불러와 SR 최적화',       '#6c5ce7'),
     ('4', '[신호 녹화]',     '센서 신호를 폴더에 CSV 저장',         '#e17055'),
@@ -174,31 +174,70 @@ class WildlifeUI:
         cv.get_tk_widget().pack(fill='both', expand=True, padx=10, pady=6)
         self._rec_canvas = cv
 
+    @staticmethod
+    def _remove_powerline_noise(signal_arr, fs=100.0):
+        """
+        적응형 FFT 노치 필터 — 지배적 고주파 간섭을 자동으로 찾아 제거.
+        발걸음 신호 대역(1~25Hz)은 완전히 보존. 저장 데이터에는 영향 없음.
+        """
+        n = len(signal_arr)
+        if n < 30:
+            return signal_arr
+
+        fft_vals = np.fft.rfft(signal_arr)
+        freqs    = np.fft.rfftfreq(n, 1.0 / fs)
+        mags     = np.abs(fft_vals)
+
+        # 발걸음 저주파 대역(1~20Hz) 평균 파워
+        lo_mask = (freqs >= 1.0) & (freqs <= 20.0)
+        lo_mean = np.mean(mags[lo_mask]) if lo_mask.any() else 1.0
+
+        # 고주파 간섭 대역(25Hz 이상)에서 지배적 피크 자동 탐색
+        hi_mask = freqs >= 25.0
+        if hi_mask.any():
+            hi_mags = mags.copy()
+            hi_mags[~hi_mask] = 0.0
+            peak_idx  = np.argmax(hi_mags)
+            peak_freq = freqs[peak_idx]
+            peak_pow  = mags[peak_idx]
+
+            # 저주파 평균보다 3배 이상 강한 피크가 있으면 → 노치 적용
+            if peak_pow > lo_mean * 3.0:
+                bw = 6.0  # 노치 대역폭 ±6Hz
+                notch = (freqs >= peak_freq - bw) & (freqs <= peak_freq + bw)
+                fft_vals[notch] = 0.0
+
+        return np.fft.irfft(fft_vals, n)
+
     def update_recording_graph(self, samples, status_text, color='#fdcb6e'):
         if not hasattr(self, '_rec_canvas'): return
         try:
-            arr = np.array(samples[-800:])
-            centered = arr - config.CURRENT_ZERO
-            self._rline.set_data(np.arange(len(centered)), centered)
-            
-            # y축 범위 조절: 소음이 미세할 때도 세부 신호가 선명하게 보이도록 최소 -30 ~ 30 범위로 줌인
+            arr     = np.array(samples[-800:], dtype=float)
+            centered = arr - np.mean(arr) if len(arr) > 0 else arr
+
+            # 전력선 노이즈(60Hz → 앨리어싱 40Hz)만 제거, 나머지 신호 보존
+            cleaned = self._remove_powerline_noise(centered, fs=config.FS) \
+                      if len(centered) > 30 else centered
+
+            self._rline.set_data(np.arange(len(cleaned)), cleaned)
+
+            # y축 범위: 최소 -30 ~ 30
             self._rec_ax1.relim()
             self._rec_ax1.autoscale_view()
             ymin, ymax = self._rec_ax1.get_ylim()
             if (ymax - ymin) < 60:
                 self._rec_ax1.set_ylim(-30, 30)
-                
-            if len(centered) > 20:
-                counts, edges = np.histogram(centered, bins=40)
+
+            if len(cleaned) > 20:
+                counts, edges = np.histogram(cleaned, bins=40)
                 centers = (edges[:-1] + edges[1:]) / 2
                 self._hline.set_data(centers, counts)
                 self._rec_ax2.relim()
                 self._rec_ax2.autoscale_view()
-                # 히스토그램의 x축 범위도 시각 신호와 맞춰 최소 -30 ~ 30 범위 유지
                 xmin, xmax = self._rec_ax2.get_xlim()
                 if (xmax - xmin) < 60:
                     self._rec_ax2.set_xlim(-30, 30)
-            
+
             self._status.configure(text=status_text, fg=color)
             self._rec_canvas.draw()
             self.root.update()
